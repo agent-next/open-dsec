@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rpc",
+    "crates/apiserver",
+    "crates/iam",
+    "crates/placement",
+    "crates/watcher",
+    "crates/edge",
+    "crates/aether",
+    "crates/chronus",
+    "crates/trajlog",
+    "crates/vmm",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT"

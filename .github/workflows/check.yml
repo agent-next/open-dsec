@@ -1,0 +1,13 @@
+name: check
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup component add clippy rustfmt
+      - uses: astral-sh/setup-uv@v6
+      - run: make check
