@@ -3,7 +3,10 @@
 # apiserver, edge — plus the aether binary containers bind-mount. Reads the
 # host's resources for the edge's admission capacity. Idempotent-ish: refuses
 # to double-start. State, sockets and PIDs live in DSEC_HOME (default
-# /tmp/dsec-dev). Usage: scripts/dev-up.sh; stop with scripts/dev-down.sh.
+# /tmp/dsec-dev; keep that path short, it holds Unix sockets). Needs `cargo build`
+# first and a running Docker daemon. Overrides: DSEC_HOME, DSEC_API_PORT (9100),
+# DSEC_IAM_PORT, DSEC_WATCHER_PORT, DSEC_PLACEMENT_PORT, DSEC_EDGE_PORT,
+# DSEC_EDGE_ID, DSEC_SBX_MAX. Usage: scripts/dev-up.sh; stop with scripts/dev-down.sh.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
