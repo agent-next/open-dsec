@@ -79,7 +79,10 @@ impl Quota {
         }
     }
     pub fn sub_len(&self) -> String {
-        format!("cpu_mc={}, mem_mb={}, sandboxes={}", self.cpu_mc, self.mem_mb, self.sandboxes)
+        format!(
+            "cpu_mc={}, mem_mb={}, sandboxes={}",
+            self.cpu_mc, self.mem_mb, self.sandboxes
+        )
     }
 }
 
@@ -133,7 +136,10 @@ pub struct Iam {
 
 impl Iam {
     pub fn in_memory() -> Iam {
-        Iam { state: RwLock::new(State::default()), path: None }
+        Iam {
+            state: RwLock::new(State::default()),
+            path: None,
+        }
     }
 
     /// State persisted to `path` (atomic rewrite on every mutation). M1
@@ -142,11 +148,17 @@ impl Iam {
         let path = path.into();
         let state = match std::fs::read(&path) {
             Ok(b) if !b.is_empty() => serde_json::from_slice(&b).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {e}", path.display()))
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{}: {e}", path.display()),
+                )
             })?,
             _ => State::default(),
         };
-        Ok(Iam { state: RwLock::new(state), path: Some(path) })
+        Ok(Iam {
+            state: RwLock::new(state),
+            path: Some(path),
+        })
     }
 
     fn save(&self, s: &State) {
@@ -166,8 +178,18 @@ impl Iam {
         let mut s = self.state.write().unwrap();
         let mut b = [0u8; 24];
         getrandom(&mut b);
-        let token = format!("dsec-{}", b.iter().map(|x| format!("{x:02x}")).collect::<String>());
-        s.principals.insert(id.into(), Principal { id: id.into(), kind, token: token.clone() });
+        let token = format!(
+            "dsec-{}",
+            b.iter().map(|x| format!("{x:02x}")).collect::<String>()
+        );
+        s.principals.insert(
+            id.into(),
+            Principal {
+                id: id.into(),
+                kind,
+                token: token.clone(),
+            },
+        );
         s.tokens.insert(token.clone(), id.into());
         self.save(&s);
         token
@@ -253,7 +275,11 @@ impl Iam {
         }
         let chain = self.chain(&s, project)?;
         for pid in &chain {
-            if s.projects[pid].policies.get(principal).is_some_and(|ops| ops.contains(&op)) {
+            if s.projects[pid]
+                .policies
+                .get(principal)
+                .is_some_and(|ops| ops.contains(&op))
+            {
                 return Ok(Decision { via: pid.clone() });
             }
         }
@@ -287,13 +313,19 @@ impl Iam {
             }
             for &op in ops {
                 self.authorize(by, parent, op).map_err(|e| {
-                    format!("delegation bound: cannot grant {} to {grantee}: {e}", op.as_str())
+                    format!(
+                        "delegation bound: cannot grant {} to {grantee}: {e}",
+                        op.as_str()
+                    )
                 })?;
             }
         }
         let mut s = self.state.write().unwrap();
         let new_alloc = {
-            let p = s.projects.get(parent).ok_or_else(|| format!("project {parent} does not exist"))?;
+            let p = s
+                .projects
+                .get(parent)
+                .ok_or_else(|| format!("project {parent} does not exist"))?;
             p.allocated.plus(&quota)
         };
         // Delegation bound 2: subproject quota sum <= parent quota.
@@ -329,11 +361,18 @@ impl Iam {
         self.authorize(by, project, Op::QuotaSet)?;
         let mut s = self.state.write().unwrap();
         let (parent, old_quota, usage, allocated) = {
-            let p = s.projects.get(project).ok_or_else(|| format!("project {project} does not exist"))?;
+            let p = s
+                .projects
+                .get(project)
+                .ok_or_else(|| format!("project {project} does not exist"))?;
             (p.parent.clone(), p.quota, p.usage, p.allocated)
         };
         if !quota.fits(&usage) {
-            return Err(format!("quota {} is below current usage {}", quota.sub_len(), usage.sub_len()));
+            return Err(format!(
+                "quota {} is below current usage {}",
+                quota.sub_len(),
+                usage.sub_len()
+            ));
         }
         if !quota.fits(&allocated) {
             return Err(format!(
@@ -347,7 +386,9 @@ impl Iam {
                 .children
                 .iter()
                 .filter(|c| c.as_str() != project)
-                .fold(Quota::default(), |acc, c| acc.plus(&s.projects[c.as_str()].quota));
+                .fold(Quota::default(), |acc, c| {
+                    acc.plus(&s.projects[c.as_str()].quota)
+                });
             let sum = siblings.plus(&quota);
             if !s.projects[&parent].quota.fits(&sum) {
                 return Err(format!(
@@ -366,9 +407,21 @@ impl Iam {
 
     /// Grant/revoke policy entries. Same delegation bound as subproject
     /// creation: `by` must hold every granted op on the chain.
-    pub fn set_policy(&self, by: &str, project: &str, principal: &str, ops: BTreeSet<Op>) -> Result<(), String> {
+    pub fn set_policy(
+        &self,
+        by: &str,
+        project: &str,
+        principal: &str,
+        ops: BTreeSet<Op>,
+    ) -> Result<(), String> {
         self.authorize(by, project, Op::PolicyGrant)?;
-        if !self.state.read().unwrap().principals.contains_key(principal) {
+        if !self
+            .state
+            .read()
+            .unwrap()
+            .principals
+            .contains_key(principal)
+        {
             return Err(format!("unknown principal {principal}"));
         }
         for &op in &ops {
@@ -377,9 +430,17 @@ impl Iam {
         }
         let mut s = self.state.write().unwrap();
         if ops.is_empty() {
-            s.projects.get_mut(project).unwrap().policies.remove(principal);
+            s.projects
+                .get_mut(project)
+                .unwrap()
+                .policies
+                .remove(principal);
         } else {
-            s.projects.get_mut(project).unwrap().policies.insert(principal.into(), ops);
+            s.projects
+                .get_mut(project)
+                .unwrap()
+                .policies
+                .insert(principal.into(), ops);
         }
         self.save(&s);
         Ok(())
@@ -402,7 +463,11 @@ impl Iam {
                 sandboxes: p.usage.sandboxes + 1,
             };
             if !p.quota.fits(&after) {
-                return Err(format!("quota exceeded at {pid}: would be {}, limit {}", after.sub_len(), p.quota.sub_len()));
+                return Err(format!(
+                    "quota exceeded at {pid}: would be {}, limit {}",
+                    after.sub_len(),
+                    p.quota.sub_len()
+                ));
             }
         }
         for pid in &chain {
@@ -450,8 +515,8 @@ pub fn op_for_method(method: &str) -> Option<Op> {
     match method {
         "sandbox.create" | "quota.charge" => Some(Op::SandboxCreate),
         "sandbox.delete" => Some(Op::SandboxDelete),
-        "sandbox.exec" | "sandbox.stream" | "sandbox.read_file" | "sandbox.write_file" | "sandbox.list_dir"
-        | "sandbox.http" => Some(Op::SandboxExec),
+        "sandbox.exec" | "sandbox.stream" | "sandbox.read_file" | "sandbox.write_file"
+        | "sandbox.list_dir" | "sandbox.http" => Some(Op::SandboxExec),
         _ => None,
     }
 }
@@ -474,7 +539,11 @@ pub mod rpc {
 
     fn ops(v: &Value) -> BTreeSet<Op> {
         v.as_array()
-            .map(|a| a.iter().filter_map(|x| serde_json::from_value(x.clone()).ok()).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| serde_json::from_value(x.clone()).ok())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
@@ -485,7 +554,10 @@ pub mod rpc {
     impl Handler for IamService {
         async fn handle(&self, req: Request, out: Responder) {
             match req.method.as_str() {
-                "authenticate" => match self.0.authenticate(req.params["token"].as_str().unwrap_or_default()) {
+                "authenticate" => match self
+                    .0
+                    .authenticate(req.params["token"].as_str().unwrap_or_default())
+                {
                     Ok(p) => out.ok(json!({ "principal": p })).await,
                     Err(e) => out.err("denied", e).await,
                 },
@@ -519,24 +591,37 @@ pub mod rpc {
                     );
                     out.ok(json!({})).await
                 }
-                "principal" => match self.0.principal(req.params["id"].as_str().unwrap_or_default()) {
+                "principal" => match self
+                    .0
+                    .principal(req.params["id"].as_str().unwrap_or_default())
+                {
                     Some(p) => out.ok(serde_json::to_value(p).unwrap()).await,
                     None => out.err("not_found", "no such principal").await,
                 },
-                "project" => match self.0.project(req.params["id"].as_str().unwrap_or_default()) {
+                "project" => match self
+                    .0
+                    .project(req.params["id"].as_str().unwrap_or_default())
+                {
                     Some(p) => out.ok(serde_json::to_value(p).unwrap()).await,
                     None => out.err("not_found", "no such project").await,
                 },
                 "add_principal" => {
                     let id = req.params["id"].as_str().unwrap_or_default().to_string();
-                    let kind = if req.params["kind"].as_str() == Some("agent") { PrincipalKind::Agent } else { PrincipalKind::Human };
+                    let kind = if req.params["kind"].as_str() == Some("agent") {
+                        PrincipalKind::Agent
+                    } else {
+                        PrincipalKind::Human
+                    };
                     let token = self.0.add_principal(&id, kind);
                     out.ok(json!({ "token": token })).await
                 }
                 "create_root_project" => {
                     let admin = req.params["admin"].as_str().unwrap_or_default().to_string();
                     let id = req.params["id"].as_str().unwrap_or_default().to_string();
-                    match self.0.create_root_project(&id, q(&req.params["quota"]), &admin) {
+                    match self
+                        .0
+                        .create_root_project(&id, q(&req.params["quota"]), &admin)
+                    {
                         Ok(()) => out.ok(json!({})).await,
                         Err(e) => out.err("conflict", e).await,
                     }
@@ -577,7 +662,10 @@ pub mod rpc {
                         Err(e) => out.err("denied", e).await,
                     }
                 }
-                _ => out.err("not_found", format!("no such method {}", req.method)).await,
+                _ => {
+                    out.err("not_found", format!("no such method {}", req.method))
+                        .await
+                }
             }
         }
     }

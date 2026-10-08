@@ -10,7 +10,10 @@ use dsec_watcher::{Watcher, WatcherService};
 
 fn arg(name: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -19,13 +22,16 @@ fn env_or(name: &str, default: &str) -> String {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listen = arg("--listen").unwrap_or_else(|| env_or("DSEC_WATCHER_LISTEN", "tcp://127.0.0.1:9102"));
+    let listen =
+        arg("--listen").unwrap_or_else(|| env_or("DSEC_WATCHER_LISTEN", "tcp://127.0.0.1:9102"));
     let mut edges = BTreeMap::new();
     let args: Vec<String> = std::env::args().collect();
     for (i, a) in args.iter().enumerate() {
         if a == "--edge" {
             if let Some(v) = args.get(i + 1) {
-                let (id, addr) = v.split_once('=').ok_or_else(|| anyhow::anyhow!("--edge expects id=tcp://addr"))?;
+                let (id, addr) = v
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--edge expects id=tcp://addr"))?;
                 edges.insert(id.to_string(), addr.to_string());
             }
         }

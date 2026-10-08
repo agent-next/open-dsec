@@ -36,7 +36,13 @@ pub struct SessionOpts {
 
 impl Default for SessionOpts {
     fn default() -> Self {
-        SessionOpts { shell: None, cwd: None, env: vec![], output_cap: DEFAULT_OUTPUT_CAP, kill_grace: Duration::from_secs(2) }
+        SessionOpts {
+            shell: None,
+            cwd: None,
+            env: vec![],
+            output_cap: DEFAULT_OUTPUT_CAP,
+            kill_grace: Duration::from_secs(2),
+        }
     }
 }
 
@@ -94,11 +100,17 @@ impl Session {
         let nonce = format!(
             "{:x}{:x}{:x}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos(),
             N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         );
         let sh = Self::start_shell(&opts).await?;
-        Ok(Session { opts, nonce, shell: Mutex::new(Some(sh)) })
+        Ok(Session {
+            opts,
+            nonce,
+            shell: Mutex::new(Some(sh)),
+        })
     }
 
     async fn start_shell(opts: &SessionOpts) -> Result<Shell> {
@@ -112,7 +124,10 @@ impl Session {
             if sh.ends_with("bash") {
                 cmd.args(["--noprofile", "--norc"]);
             }
-            cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+            cmd.stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
             if let Some(c) = &opts.cwd {
                 cmd.current_dir(c);
             }
@@ -126,11 +141,18 @@ impl Session {
             }
             match cmd.spawn() {
                 Ok(mut child) => {
-                    let pid = child.id().ok_or_else(|| anyhow!("shell exited immediately"))? as i32;
+                    let pid = child
+                        .id()
+                        .ok_or_else(|| anyhow!("shell exited immediately"))?
+                        as i32;
                     let stdin = child.stdin.take().unwrap();
                     let (tx, rx) = mpsc::channel(64);
                     for (is_err, mut r) in [
-                        (false, Box::new(child.stdout.take().unwrap()) as Box<dyn tokio::io::AsyncRead + Unpin + Send>),
+                        (
+                            false,
+                            Box::new(child.stdout.take().unwrap())
+                                as Box<dyn tokio::io::AsyncRead + Unpin + Send>,
+                        ),
                         (true, Box::new(child.stderr.take().unwrap())),
                     ] {
                         let tx = tx.clone();
@@ -148,7 +170,12 @@ impl Session {
                             }
                         });
                     }
-                    return Ok(Shell { child, stdin, rx, pid });
+                    return Ok(Shell {
+                        child,
+                        stdin,
+                        rx,
+                        pid,
+                    });
                 }
                 Err(e) => last = Some(anyhow!("spawn {sh}: {e}")),
             }
@@ -158,7 +185,12 @@ impl Session {
 
     /// Run `cmd` in the session shell, streaming events to `tx`. The final event is
     /// always `Exit`. Calls on one session are serialized.
-    pub async fn exec(&self, cmd: &str, timeout: Option<Duration>, tx: mpsc::Sender<Event>) -> Result<()> {
+    pub async fn exec(
+        &self,
+        cmd: &str,
+        timeout: Option<Duration>,
+        tx: mpsc::Sender<Event>,
+    ) -> Result<()> {
         let mut guard = self.shell.lock().await;
         let mut reset = false;
         if guard.is_none() {
@@ -172,7 +204,10 @@ impl Session {
             shell_quote(cmd),
             m = shell_quote(&m)
         );
-        let mut info = ExitInfo { session_reset: reset, ..Default::default() };
+        let mut info = ExitInfo {
+            session_reset: reset,
+            ..Default::default()
+        };
         if sh.stdin.write_all(script.as_bytes()).await.is_err() || sh.stdin.flush().await.is_err() {
             *guard = None;
             info.code = -1;
@@ -190,7 +225,9 @@ impl Session {
         let mut code = 0;
         while !(scan[0].done && scan[1].done) {
             let wait = match (deadline, killed_at) {
-                (_, Some(k)) => (k + self.opts.kill_grace).saturating_duration_since(Instant::now()).min(Duration::from_millis(200)),
+                (_, Some(k)) => (k + self.opts.kill_grace)
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(200)),
                 (Some(d), None) => d.saturating_duration_since(Instant::now()),
                 (None, None) => Duration::from_secs(3600),
             };
@@ -210,7 +247,11 @@ impl Session {
                         };
                         sent += text.len();
                         if !text.is_empty() {
-                            let ev = if is_err { Event::Stderr { data: text } } else { Event::Stdout { data: text } };
+                            let ev = if is_err {
+                                Event::Stderr { data: text }
+                            } else {
+                                Event::Stdout { data: text }
+                            };
                             if tx.send(ev).await.is_err() {
                                 // Consumer gone: treat like a cap hit so we stop the command.
                                 info.truncated = true;
@@ -313,7 +354,9 @@ impl Scan {
         if let Some(i) = find(&self.acc, mb) {
             let after = &self.acc[i + mb.len()..];
             if let Some(nl) = after.iter().position(|b| *b == b'\n') {
-                self.rc = std::str::from_utf8(&after[..nl]).ok().and_then(|s| s.parse().ok());
+                self.rc = std::str::from_utf8(&after[..nl])
+                    .ok()
+                    .and_then(|s| s.parse().ok());
                 self.done = true;
                 let head = String::from_utf8_lossy(&self.acc[..i]).into_owned();
                 if !head.is_empty() {
@@ -331,7 +374,10 @@ impl Scan {
         // Hold back only a proper prefix of the marker (it could be split
         // across reads) and any incomplete UTF-8 tail; emit the rest at once
         // so short outputs stream immediately.
-        let mut keep = (1..mb.len()).rev().find(|&k| self.acc.ends_with(&mb[..k])).unwrap_or(0);
+        let mut keep = (1..mb.len())
+            .rev()
+            .find(|&k| self.acc.ends_with(&mb[..k]))
+            .unwrap_or(0);
         let safe = self.acc.len() - keep;
         if let Err(e) = std::str::from_utf8(&self.acc[..safe]) {
             if e.error_len().is_none() {
@@ -364,11 +410,17 @@ fn descendants(root: i32) -> Vec<i32> {
     let mut parent_of = std::collections::HashMap::new();
     if let Ok(rd) = std::fs::read_dir("/proc") {
         for e in rd.flatten() {
-            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else { continue };
+            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<i32>().ok()) else {
+                continue;
+            };
             if let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) {
                 // "pid (comm) S ppid ..." - comm may contain spaces/parens.
                 if let Some(rest) = stat.rsplit_once(')').map(|x| x.1) {
-                    if let Some(pp) = rest.split_whitespace().nth(1).and_then(|s| s.parse::<i32>().ok()) {
+                    if let Some(pp) = rest
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse::<i32>().ok())
+                    {
                         parent_of.insert(pid, pp);
                     }
                 }
@@ -407,7 +459,10 @@ fn kill_tree(root: i32) {
 pub fn pid_alive(pid: i32) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/stat"))
         .ok()
-        .and_then(|s| s.rsplit_once(')').map(|x| x.1.trim_start().starts_with(|c| c != 'Z' && c != 'X')))
+        .and_then(|s| {
+            s.rsplit_once(')')
+                .map(|x| x.1.trim_start().starts_with(|c| c != 'Z' && c != 'X'))
+        })
         .unwrap_or(false)
 }
 

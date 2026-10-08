@@ -76,7 +76,10 @@ impl Watcher {
     /// runs immediately so callers get a fresh view without waiting.
     pub fn start(edges: BTreeMap<String, String>, interval: Duration) -> Arc<Watcher> {
         let w = Arc::new(Watcher {
-            inner: Arc::new(Inner { edges, views: RwLock::new(Snapshot::default()) }),
+            inner: Arc::new(Inner {
+                edges,
+                views: RwLock::new(Snapshot::default()),
+            }),
         });
         let w2 = w.clone();
         tokio::spawn(async move {
@@ -93,10 +96,21 @@ impl Watcher {
 
     /// One poll round: every edge answers `status` or is marked unhealthy.
     async fn poll_all(&self) {
-        let mut snap = Snapshot { edges: BTreeMap::new(), taken_ms: now_ms() };
+        let mut snap = Snapshot {
+            edges: BTreeMap::new(),
+            taken_ms: now_ms(),
+        };
         for (id, addr) in &self.inner.edges {
-            let mut v = EdgeView { addr: addr.clone(), healthy: false, status: None, last_ok_ms: 0 };
-            if let Ok(r) = Client::new(addr.parse().unwrap()).call("status", json!({})).await {
+            let mut v = EdgeView {
+                addr: addr.clone(),
+                healthy: false,
+                status: None,
+                last_ok_ms: 0,
+            };
+            if let Ok(r) = Client::new(addr.parse().unwrap())
+                .call("status", json!({}))
+                .await
+            {
                 if let Ok(st) = serde_json::from_value::<EdgeStatus>(r) {
                     v.healthy = true;
                     v.last_ok_ms = now_ms();
@@ -116,7 +130,12 @@ impl Watcher {
             .await
             .edges
             .entry(id.to_string())
-            .or_insert(EdgeView { addr: addr.to_string(), healthy: false, status: None, last_ok_ms: 0 });
+            .or_insert(EdgeView {
+                addr: addr.to_string(),
+                healthy: false,
+                status: None,
+                last_ok_ms: 0,
+            });
     }
 
     pub async fn snapshot(&self) -> Snapshot {
@@ -165,7 +184,10 @@ pub enum CountKind {
 }
 
 pub fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Serves the watcher to placement and the apiserver.
@@ -184,11 +206,17 @@ impl Handler for WatcherService {
             }
             "register" => {
                 self.0
-                    .register(req.params["id"].as_str().unwrap_or_default(), req.params["addr"].as_str().unwrap_or_default())
+                    .register(
+                        req.params["id"].as_str().unwrap_or_default(),
+                        req.params["addr"].as_str().unwrap_or_default(),
+                    )
                     .await;
                 out.ok(json!({})).await
             }
-            _ => out.err("not_found", format!("no such method {}", req.method)).await,
+            _ => {
+                out.err("not_found", format!("no such method {}", req.method))
+                    .await
+            }
         }
     }
 }
@@ -233,8 +261,15 @@ mod tests {
     }
 
     async fn spawn_edge(id: &str, caps: Vec<String>) -> (String, Arc<FakeEdge>) {
-        let e = Arc::new(FakeEdge { id: id.into(), running: AtomicU64::new(2), caps, alive: AtomicU64::new(1) });
-        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap()).await.unwrap();
+        let e = Arc::new(FakeEdge {
+            id: id.into(),
+            running: AtomicU64::new(2),
+            caps,
+            alive: AtomicU64::new(1),
+        });
+        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
         let addr = l.local_addr().unwrap().to_string(); // already tcp://host:port
         tokio::spawn(l.serve(e.clone()));
         (addr, e)
@@ -245,11 +280,17 @@ mod tests {
         let (a1, e1) = spawn_edge("e1", vec!["container".into()]).await;
         let (a2, e2) = spawn_edge("e2", vec!["container".into(), "gpu".into()]).await;
         e2.running.store(5, Ordering::SeqCst);
-        let w = Watcher::start(BTreeMap::from([("e1".into(), a1), ("e2".into(), a2)]), Duration::from_secs(1));
+        let w = Watcher::start(
+            BTreeMap::from([("e1".into(), a1), ("e2".into(), a2)]),
+            Duration::from_secs(1),
+        );
         tokio::time::sleep(Duration::from_millis(250)).await;
         let snap = w.snapshot().await;
         assert!(snap.edges["e1"].healthy && snap.edges["e2"].healthy);
-        assert_eq!(snap.edges["e2"].status.as_ref().unwrap().by_user["alice"], 5);
+        assert_eq!(
+            snap.edges["e2"].status.as_ref().unwrap().by_user["alice"],
+            5
+        );
         assert_eq!(w.count_by(CountKind::User).await["alice"], 7);
         assert_eq!(w.count_by(CountKind::Backend).await["container"], 7);
         // Counts move when the edge's load moves (next poll round).
@@ -261,12 +302,18 @@ mod tests {
     #[tokio::test]
     async fn unreachable_edges_are_unhealthy_and_excluded_from_routes() {
         let (a1, e1) = spawn_edge("e1", vec!["container".into()]).await;
-        let w = Watcher::start(BTreeMap::from([("e1".into(), a1)]), Duration::from_millis(150));
+        let w = Watcher::start(
+            BTreeMap::from([("e1".into(), a1)]),
+            Duration::from_millis(150),
+        );
         tokio::time::sleep(Duration::from_millis(250)).await;
         assert!(w.edge_routes().await.contains_key("e1"));
         e1.alive.store(0, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(500)).await;
-        assert!(w.edge_routes().await.is_empty(), "dead edge must drop out of routes");
+        assert!(
+            w.edge_routes().await.is_empty(),
+            "dead edge must drop out of routes"
+        );
         assert!(!w.snapshot().await.edges["e1"].healthy);
         assert_eq!(w.count_by(CountKind::User).await.get("alice"), None);
     }
@@ -288,12 +335,17 @@ mod tests {
         let w2 = Watcher::start(edges, Duration::from_secs(60));
         tokio::time::sleep(Duration::from_millis(250)).await;
         let after = w2.snapshot().await;
-        let norm = |s: &Snapshot| s
-            .edges
-            .values()
-            .map(|v| (v.addr.clone(), v.status.as_ref().unwrap().sbx_used))
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(norm(&before), norm(&after), "view must rebuild identically from re-polling");
+        let norm = |s: &Snapshot| {
+            s.edges
+                .values()
+                .map(|v| (v.addr.clone(), v.status.as_ref().unwrap().sbx_used))
+                .collect::<BTreeMap<_, _>>()
+        };
+        assert_eq!(
+            norm(&before),
+            norm(&after),
+            "view must rebuild identically from re-polling"
+        );
         assert_eq!(w2.count_by(CountKind::Task).await["swe-bench"], 9);
     }
 
@@ -302,7 +354,9 @@ mod tests {
         let (a1, _e1) = spawn_edge("e1", vec!["container".into()]).await;
         let w = Watcher::start(BTreeMap::from([("e1".into(), a1)]), Duration::from_secs(1));
         tokio::time::sleep(Duration::from_millis(250)).await;
-        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap()).await.unwrap();
+        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
         let addr = l.local_addr().unwrap();
         tokio::spawn(l.serve(Arc::new(WatcherService(w))));
         let c = Client::new(addr);

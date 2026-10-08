@@ -8,7 +8,10 @@ use dsec_rpc::Listener;
 
 fn arg(name: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -17,12 +20,19 @@ fn env_or(name: &str, default: &str) -> String {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listen = arg("--listen").unwrap_or_else(|| env_or("DSEC_PLACEMENT_LISTEN", "tcp://127.0.0.1:9103"));
-    let watcher = arg("--watcher").unwrap_or_else(|| env_or("DSEC_WATCHER_LISTEN", "tcp://127.0.0.1:9102"));
+    let listen =
+        arg("--listen").unwrap_or_else(|| env_or("DSEC_PLACEMENT_LISTEN", "tcp://127.0.0.1:9103"));
+    let watcher =
+        arg("--watcher").unwrap_or_else(|| env_or("DSEC_WATCHER_LISTEN", "tcp://127.0.0.1:9102"));
     let d = arg("--d").and_then(|v| v.parse().ok()).unwrap_or(2);
     let p = Arc::new(Placement::new(
-        Arc::new(WatcherView { addr: watcher.parse()? }),
-        Opts { d, ..Default::default() },
+        Arc::new(WatcherView {
+            addr: watcher.parse()?,
+        }),
+        Opts {
+            d,
+            ..Default::default()
+        },
     ));
     let l = Listener::bind(&listen.parse()?).await?;
     eprintln!("placement listening on {listen} (watcher {watcher}, d={d})");

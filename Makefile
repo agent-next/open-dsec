@@ -11,9 +11,10 @@ check:
 # Tests that need real privileges/services: docker for the container
 # backend, and the dev-up control plane for the SDK e2e.
 host-check:
+	cargo build
 	cargo test -p dsec-edge -- --ignored
-	scripts/dev-up.sh
+	$(CURDIR)/scripts/dev-up.sh
 	cd sdk/python && DSEC_ENDPOINT=127.0.0.1:9100 uv run --group dev pytest -q -m host; rc=$$?; \
 	  leftover=$$(docker ps -a --filter label=open-dsec -q | wc -l); \
-	  scripts/dev-down.sh; \
+	  $(CURDIR)/scripts/dev-down.sh; \
 	  test $$rc -eq 0 && test $$leftover -eq 0 || { echo "host-check failed (pytest rc=$$rc, leftover containers=$$leftover)"; exit 1; }

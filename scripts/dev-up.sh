@@ -34,7 +34,7 @@ SBX_MAX="${DSEC_SBX_MAX:-512}"
 if ! docker info >/dev/null 2>&1; then
   echo "warning: docker unreachable — the edge will create nothing until it is" >&2
 fi
-docker image inspect debian:12-slim >/dev/null 2>&1 || docker pull debian:12-slim
+docker image inspect ubuntu:24.04 >/dev/null 2>&1 || docker pull ubuntu:24.04
 
 mkdir -p "$DSEC_HOME/edge"
 : > "$DSEC_HOME/pids"
@@ -57,9 +57,20 @@ start api    "$BIN/dsec-apiserver" --listen "tcp://127.0.0.1:$API_PORT" \
              --iam "tcp://127.0.0.1:$IAM_PORT" --placement "tcp://127.0.0.1:$PLACEMENT_PORT" \
              --watcher "tcp://127.0.0.1:$WATCHER_PORT"
 
-# Readiness: the apiserver accepts TCP and iam answers.
-for i in $(seq 1 50); do
-  if (echo > /dev/tcp/127.0.0.1/"$API_PORT") >/dev/null 2>&1; then break; fi
+# Readiness: the watcher must report the edge as healthy — placement (and
+# therefore every create) is dead in the water until then.
+for i in $(seq 1 100); do
+  if python3 - "$WATCHER_PORT" "$EDGE_ID" <<'PY' 2>/dev/null
+import json, socket, struct, sys
+port, edge_id = sys.argv[1], sys.argv[2]
+s = socket.create_connection(("127.0.0.1", int(port)), timeout=2)
+body = json.dumps({"id": 1, "method": "edges", "params": {}}).encode()
+s.sendall(struct.pack(">I", len(body)) + body)
+(n,) = struct.unpack(">I", s.recv(4))
+rep = json.loads(s.recv(n))
+sys.exit(0 if edge_id in rep.get("result", {}).get("edges", {}) else 1)
+PY
+  then break; fi
   sleep 0.2
 done
 
@@ -76,7 +87,7 @@ open-dsec dev stack up (edge capacity: ${CPU_MC}mc / ${MEM_MB}MiB / ${SBX_MAX} s
 
   from libdsec import Client
   c = Client("127.0.0.1:$API_PORT", token="$DEV_TOKEN")
-  sb = c.create(image="debian:12-slim", cpu=0.5, memory=256, ttl=600,
+  sb = c.create(image="ubuntu:24.04", cpu=0.5, memory=256, ttl=600,
                 network={"pypi": True, "npm": False})
   sb.exec("echo hello")
   sb.release()

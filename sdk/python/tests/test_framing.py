@@ -68,7 +68,7 @@ def fake_api():
                     "result": {
                         "id": "sbx-e1-abcdef012345",
                         "edge_id": "e1",
-                        "image": "debian:12-slim",
+                        "image": "ubuntu:24.04",
                         "cpu_mc": 500,
                         "mem_mb": 256,
                         "network": req["params"]["network"],
@@ -119,7 +119,7 @@ def fake_api():
                     "result": {
                         "id": "sbx-e1-abcdef012345",
                         "edge_id": "e1",
-                        "image": "debian:12-slim",
+                        "image": "ubuntu:24.04",
                         "cpu_mc": 500,
                         "mem_mb": 256,
                         "network": {},
@@ -139,7 +139,7 @@ def fake_api():
 def test_create_exec_release_roundtrip(fake_api):
     endpoint, calls = fake_api
     c = Client(endpoint, token="dsec-t", project="dev")
-    sb = c.create(image="debian:12-slim", cpu=0.5, memory=256, network={"pypi": True, "npm": False})
+    sb = c.create(image="ubuntu:24.04", cpu=0.5, memory=256, network={"pypi": True, "npm": False})
     assert sb.id == "sbx-e1-abcdef012345"
     # network dict is carried through untouched (enforcement is M4)
     assert calls[0]["params"]["network"] == {"pypi": True, "npm": False}

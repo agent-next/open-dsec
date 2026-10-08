@@ -42,9 +42,15 @@ pub enum SbxStatus {
     /// Container up, aether channel accepted.
     Running,
     /// Environment died unexpectedly (V4.1 §5.1.3: a crashed trajectory).
-    Failed { reason: String, exit_code: Option<i64>, repercussion: bool },
+    Failed {
+        reason: String,
+        exit_code: Option<i64>,
+        repercussion: bool,
+    },
     /// Normal end: explicit release or TTL expiry.
-    Stopped { reason: String },
+    Stopped {
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,7 +77,13 @@ impl Sandbox {
         matches!(self.status, SbxStatus::Running)
     }
     pub fn repercussion(&self) -> bool {
-        matches!(self.status, SbxStatus::Failed { repercussion: true, .. })
+        matches!(
+            self.status,
+            SbxStatus::Failed {
+                repercussion: true,
+                ..
+            }
+        )
     }
 }
 
@@ -110,7 +122,7 @@ impl Default for EdgeConfig {
             data_dir: std::env::temp_dir().join("dsec-edge"),
             aether_bin: "dsec-aether".into(),
             iam_addr: String::new(),
-            default_image: "debian:12-slim".into(),
+            default_image: "ubuntu:24.04".into(),
             ttl_sweep: Duration::from_secs(2),
             capabilities: vec!["container".into()],
         }
@@ -140,7 +152,11 @@ impl Edge {
             docker: Docker::new(cfg.docker_sock.clone()),
             traj,
             sbx: Mutex::new(HashMap::new()),
-            iam: if cfg.iam_addr.is_empty() { None } else { Some(Client::new(cfg.iam_addr.parse()?)) },
+            iam: if cfg.iam_addr.is_empty() {
+                None
+            } else {
+                Some(Client::new(cfg.iam_addr.parse()?))
+            },
             cfg,
         }))
     }
@@ -150,11 +166,19 @@ impl Edge {
         let _ = std::io::Read::read(&mut std::fs::File::open("/dev/urandom").unwrap(), &mut b);
         // P §3.2: the sandbox id encodes its owning edge so any apiserver
         // instance can route without shared state.
-        format!("sbx-{}-{}", self.cfg.edge_id, b.iter().map(|x| format!("{x:02x}")).collect::<String>())
+        format!(
+            "sbx-{}-{}",
+            self.cfg.edge_id,
+            b.iter().map(|x| format!("{x:02x}")).collect::<String>()
+        )
     }
 
     fn used(sbx: &HashMap<String, SbxEntry>) -> (u64, u64, u64) {
-        sbx.values().filter(|e| e.meta.running()).fold((0, 0, 0), |(c, m, n), e| (c + e.meta.cpu_mc, m + e.meta.mem_mb, n + 1))
+        sbx.values()
+            .filter(|e| e.meta.running())
+            .fold((0, 0, 0), |(c, m, n), e| {
+                (c + e.meta.cpu_mc, m + e.meta.mem_mb, n + 1)
+            })
     }
 
     /// Node-local admission (P §3.3, V4.1 §5.1.3): reject when the request
@@ -163,7 +187,8 @@ impl Edge {
         let g = self.sbx.lock().await;
         let (uc, um, un) = Self::used(&g);
         let t = self.cfg.warning_threshold;
-        let over = |used: u64, req: u64, total: u64| total == 0 || (used + req) as f64 > total as f64 * t;
+        let over =
+            |used: u64, req: u64, total: u64| total == 0 || (used + req) as f64 > total as f64 * t;
         if over(uc, cpu_mc, self.cfg.cpu_total_mc) {
             return Err(format!(
                 "edge {}: cpu would be {}/{} mc > {:.0}% threshold",
@@ -183,14 +208,20 @@ impl Edge {
             ));
         }
         if over(un, 1, self.cfg.sbx_total) {
-            return Err(format!("edge {}: sandbox count would exceed {}", self.cfg.edge_id, self.cfg.sbx_total));
+            return Err(format!(
+                "edge {}: sandbox count would exceed {}",
+                self.cfg.edge_id, self.cfg.sbx_total
+            ));
         }
         Ok(())
     }
 
     /// Create a sandbox (P §3.3): provision, start, adopt the aether channel.
     pub async fn create(self: &Arc<Self>, req: Value) -> Result<Sandbox, (String, String)> {
-        let image = req["image"].as_str().unwrap_or(&self.cfg.default_image).to_string();
+        let image = req["image"]
+            .as_str()
+            .unwrap_or(&self.cfg.default_image)
+            .to_string();
         let cpu_mc = req["cpu_mc"].as_u64().unwrap_or(500).max(50);
         let mem_mb = req["mem_mb"].as_u64().unwrap_or(512).max(32);
         if let Err(e) = self.admit(cpu_mc, mem_mb).await {
@@ -199,12 +230,18 @@ impl Edge {
         let id = self.sbx_id();
         let dir = self.cfg.data_dir.join("active").join(&id);
         std::fs::create_dir_all(&dir).map_err(|e| ("internal".into(), e.to_string()))?;
+        // Resolve the aether binary: docker bind specs must not carry ".."
+        // segments, and the container runs it at its own absolute path.
+        let aether_bin = std::fs::canonicalize(&self.cfg.aether_bin)
+            .unwrap_or_else(|_| self.cfg.aether_bin.clone());
         let name = format!("dsec-{}", id.replace('/', "-"));
         let sock_in_container = "/run/dsec/aether.sock";
         let spec = CreateSpec {
             image: image.clone(),
             cmd: vec![
-                self.cfg.aether_bin.file_name().unwrap().to_string_lossy().into_owned(),
+                // Mounted at its own absolute path (see binds): docker's Cmd
+                // lookup has no PATH to consult.
+                aether_bin.to_string_lossy().into_owned(),
                 format!("unix://{sock_in_container}"),
             ],
             cpu_mc,
@@ -212,12 +249,20 @@ impl Edge {
             network_mode: "none".into(),
             binds: vec![
                 format!("{}:/run/dsec", dir.display()),
-                format!("{}:{}:ro", self.cfg.aether_bin.display(), self.cfg.aether_bin.display()),
+                format!(
+                    "{}:{}:ro",
+                    self.cfg.aether_bin.display(),
+                    self.cfg.aether_bin.display()
+                ),
             ],
             labels: vec![(LABEL.into(), "1".into()), (LABEL_SBX.into(), id.clone())],
             name,
         };
-        let cid = self.docker.create(&spec).await.map_err(|e| ("create_failed".into(), e.to_string()))?;
+        let cid = self
+            .docker
+            .create(&spec)
+            .await
+            .map_err(|e| ("create_failed".into(), e.to_string()))?;
         if let Err(e) = self.docker.start(&cid).await {
             let _ = self.docker.remove(&cid, true).await;
             return Err(("start_failed".into(), e.to_string()));
@@ -237,7 +282,14 @@ impl Edge {
             container_id: Some(cid.clone()),
             created_ms: dsec_watcher::now_ms(),
         };
-        self.sbx.lock().await.insert(id.clone(), SbxEntry { meta: meta.clone(), aether: None, dir: dir.clone() });
+        self.sbx.lock().await.insert(
+            id.clone(),
+            SbxEntry {
+                meta: meta.clone(),
+                aether: None,
+                dir: dir.clone(),
+            },
+        );
         // Adopt the aether channel when it dials in, and watch for it closing.
         self.spawn_channel_adopt(id);
         Ok(meta)
@@ -278,7 +330,12 @@ impl Edge {
             // failure (P §3.3); whether the container crashed decides the
             // repercussion signal (V4.1 §5.1.3).
             let (running, exit_code) = match &cid {
-                Some(c) => edge.docker.inspect(c).await.map(|(r, e, _)| (r, e)).unwrap_or((false, None)),
+                Some(c) => edge
+                    .docker
+                    .inspect(c)
+                    .await
+                    .map(|(r, e, _)| (r, e))
+                    .unwrap_or((false, None)),
                 None => (false, None),
             };
             let mut m = edge.sbx.lock().await;
@@ -322,16 +379,25 @@ impl Edge {
     }
 
     pub async fn list(&self) -> Vec<Sandbox> {
-        self.sbx.lock().await.values().map(|e| e.meta.clone()).collect()
+        self.sbx
+            .lock()
+            .await
+            .values()
+            .map(|e| e.meta.clone())
+            .collect()
     }
 
     /// Stop and remove the container and release quota. Idempotent.
     pub async fn delete(&self, id: &str) -> Result<Sandbox, String> {
         let meta = {
             let mut m = self.sbx.lock().await;
-            let Some(e) = m.get_mut(id) else { return Err(format!("unknown sandbox {id}")) };
+            let Some(e) = m.get_mut(id) else {
+                return Err(format!("unknown sandbox {id}"));
+            };
             if e.meta.running() {
-                e.meta.status = SbxStatus::Stopped { reason: "released".into() };
+                e.meta.status = SbxStatus::Stopped {
+                    reason: "released".into(),
+                };
             }
             e.aether = None; // channel monitor sees non-running: no failure mark
             e.meta.clone()
@@ -354,7 +420,9 @@ impl Edge {
         let due: Vec<String> = {
             let m = self.sbx.lock().await;
             m.iter()
-                .filter(|(_, e)| e.meta.running() && e.meta.ttl_ms.is_some_and(|t| e.meta.created_ms + t <= now))
+                .filter(|(_, e)| {
+                    e.meta.running() && e.meta.ttl_ms.is_some_and(|t| e.meta.created_ms + t <= now)
+                })
                 .map(|(k, _)| k.clone())
                 .collect()
         };
@@ -364,7 +432,9 @@ impl Edge {
                 let mut m = self.sbx.lock().await;
                 match m.get_mut(&id) {
                     Some(e) => {
-                        e.meta.status = SbxStatus::Stopped { reason: "ttl".into() };
+                        e.meta.status = SbxStatus::Stopped {
+                            reason: "ttl".into(),
+                        };
                         e.meta.clone()
                     }
                     None => continue,
@@ -413,7 +483,14 @@ impl Edge {
     }
 
     /// Fast-forward decision for one operation (V4 §5.2.5).
-    fn traj_replay(&self, sbx: &str, session: &str, idx: u64, op: &str, params: &Value) -> dsec_trajlog::Replay {
+    fn traj_replay(
+        &self,
+        sbx: &str,
+        session: &str,
+        idx: u64,
+        op: &str,
+        params: &Value,
+    ) -> dsec_trajlog::Replay {
         self.traj.replay(sbx, session, idx, op, params)
     }
 
@@ -453,7 +530,9 @@ impl Edge {
     async fn aether_of(&self, id: &str) -> Result<Client, (String, String)> {
         let (status, client) = {
             let m = self.sbx.lock().await;
-            let Some(e) = m.get(id) else { return Err(("not_found".into(), format!("unknown sandbox {id}"))) };
+            let Some(e) = m.get(id) else {
+                return Err(("not_found".into(), format!("unknown sandbox {id}")));
+            };
             (e.meta.status.clone(), e.aether.clone())
         };
         match (status, client) {
@@ -467,15 +546,26 @@ impl Edge {
     }
 
     /// One operation's journey: trajlog replay check, aether forward, record.
-    async fn op_call(&self, req: &Request, method_on_aether: &str, op: &str) -> Result<Value, (String, String)> {
-        let sbx = req.params["sandbox_id"].as_str().unwrap_or_default().to_string();
+    async fn op_call(
+        &self,
+        req: &Request,
+        method_on_aether: &str,
+        op: &str,
+    ) -> Result<Value, (String, String)> {
+        let sbx = req.params["sandbox_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         // Replay key: the op's own params, without sandbox id / idx / token.
         let mut op_params = req.params.clone();
         op_params["sandbox_id"].take();
         op_params["idx"].take();
         let ctx = OpCtx {
             user: req.params["user"].as_str().unwrap_or("anon").to_string(),
-            session: req.params["session"].as_str().unwrap_or("default").to_string(),
+            session: req.params["session"]
+                .as_str()
+                .unwrap_or("default")
+                .to_string(),
             idx: req.params["idx"].as_u64().unwrap_or(0),
             op: op.to_string(),
             params: op_params.clone(),
@@ -513,11 +603,19 @@ impl Handler for EdgeService {
                 Ok(m) => out.ok(serde_json::to_value(&m).unwrap()).await,
                 Err((code, msg)) => out.err(&code, msg).await,
             },
-            "sandbox.delete" => match self.0.delete(req.params["sandbox_id"].as_str().unwrap_or_default()).await {
+            "sandbox.delete" => match self
+                .0
+                .delete(req.params["sandbox_id"].as_str().unwrap_or_default())
+                .await
+            {
                 Ok(m) => out.ok(serde_json::to_value(&m).unwrap()).await,
                 Err(e) => out.err("delete_failed", e).await,
             },
-            "sandbox.get" => match self.0.get(req.params["sandbox_id"].as_str().unwrap_or_default()).await {
+            "sandbox.get" => match self
+                .0
+                .get(req.params["sandbox_id"].as_str().unwrap_or_default())
+                .await
+            {
                 Some(m) => out.ok(serde_json::to_value(&m).unwrap()).await,
                 None => out.err("not_found", "no such sandbox").await,
             },
@@ -585,10 +683,17 @@ impl Handler for EdgeService {
             }
             "sandbox.traj" => {
                 let sbx = req.params["sandbox_id"].as_str().unwrap_or_default();
-                let entries = self.0.traj_log().query(sbx, req.params["session"].as_str(), req.params["op"].as_str());
+                let entries = self.0.traj_log().query(
+                    sbx,
+                    req.params["session"].as_str(),
+                    req.params["op"].as_str(),
+                );
                 out.ok(json!({ "entries": entries })).await
             }
-            _ => out.err("not_found", format!("no such method {}", req.method)).await,
+            _ => {
+                out.err("not_found", format!("no such method {}", req.method))
+                    .await
+            }
         }
     }
 }

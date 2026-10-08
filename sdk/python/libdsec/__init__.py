@@ -19,6 +19,7 @@ import secrets
 import socket
 import struct
 import threading
+import time
 from typing import Iterator, Optional
 
 __all__ = ["Client", "Sandbox", "RpcError", "ExecResult"]
@@ -160,20 +161,18 @@ class Sandbox:
         self._session = secrets.token_hex(8)
         self._idx = 0
 
-    def exec(self, cmd: str, timeout_ms: Optional[int] = None, replay: bool = True) -> ExecResult:
+    def exec(self, cmd: str, timeout_ms: Optional[int] = None, idx: Optional[int] = None) -> ExecResult:
         """Run a shell command; state (cwd, env, files) persists across calls.
 
-        `replay=True` journals the call; re-issuing a journaled command (same
-        session + index + text, as a preempted client resuming does) returns
-        the cached result instead of re-executing (V4 §5.2.5)."""
-        params: dict = {"sandbox_id": self.id, "session": self._session, "cmd": cmd}
-        idx = self._idx
-        if replay:
-            params["idx"] = idx
-            self._idx += 1
+        Every call is journaled in the sandbox's trajectory log under its
+        position `idx` (auto-incremented when not given). A preempted client
+        resuming its command stream re-issues the same idx with the same
+        text and gets the cached result instead of a re-execution — the
+        fast-forward of V4 §5.2.5 (never re-runs non-idempotent commands)."""
+        params: dict = {"sandbox_id": self.id, "session": self._session, "cmd": cmd, "idx": self._bump() if idx is None else idx}
         if timeout_ms is not None:
             params["timeout_ms"] = timeout_ms
-        r = self._c._call("sandbox.exec", params)
+        r = self._call_ready("sandbox.exec", params)
         return ExecResult(r)
 
     def stream(self, cmd: str, timeout_ms: Optional[int] = None) -> Iterator[dict]:
@@ -182,12 +181,23 @@ class Sandbox:
         params: dict = {"sandbox_id": self.id, "session": self._session, "cmd": cmd}
         if timeout_ms is not None:
             params["timeout_ms"] = timeout_ms
-        yield from self._c._stream("sandbox.stream", params)
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                rx = self._c._stream("sandbox.stream", params)
+                first = next(rx)
+                break
+            except RpcError as e:
+                if e.code != "not_ready" or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.15)
+        yield first
+        yield from rx
 
     def read_file(self, path: str) -> bytes:
         import base64
 
-        r = self._c._call("sandbox.read_file", {"sandbox_id": self.id, "session": self._session, "path": path, "idx": self._bump()})
+        r = self._call_ready("sandbox.read_file", {"sandbox_id": self.id, "session": self._session, "path": path, "idx": self._bump()})
         return base64.b64decode(r["data"])
 
     def write_file(self, path: str, data: bytes, mode: Optional[int] = None) -> None:
@@ -202,16 +212,16 @@ class Sandbox:
         }
         if mode is not None:
             params["mode"] = mode
-        self._c._call("sandbox.write_file", params)
+        self._call_ready("sandbox.write_file", params)
 
     def list_dir(self, path: str) -> list[dict]:
-        r = self._c._call("sandbox.list_dir", {"sandbox_id": self.id, "session": self._session, "path": path, "idx": self._bump()})
+        r = self._call_ready("sandbox.list_dir", {"sandbox_id": self.id, "session": self._session, "path": path, "idx": self._bump()})
         return r["entries"]
 
     def http_request(self, method: str = "GET", url: str = "", headers: Optional[dict] = None, body: bytes = b""):
         import base64
 
-        r = self._c._call(
+        r = self._call_ready(
             "sandbox.http",
             {
                 "sandbox_id": self.id,
@@ -226,6 +236,18 @@ class Sandbox:
         """Provenance: the sandbox's globally ordered operation log."""
         r = self._c._call("sandbox.traj", {"sandbox_id": self.id})
         return r["entries"]
+
+    def _call_ready(self, method: str, params: dict, wait_s: float = 30.0) -> dict:
+        """Call, tolerating the aether channel still coming up after create
+        (the in-sandbox proxy needs a moment to dial the edge, P §3.3)."""
+        deadline = time.monotonic() + wait_s
+        while True:
+            try:
+                return self._c._call(method, params)
+            except RpcError as e:
+                if e.code != "not_ready" or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.15)
 
     def refresh(self) -> dict:
         self.status = self._c._call("sandbox.get", {"sandbox_id": self.id})["status"]
@@ -269,7 +291,7 @@ class Client:
         self,
         *,
         type: str = "container",
-        image: str = "debian:12-slim",
+        image: str = "ubuntu:24.04",
         cpu: float = 1.0,
         memory: int = 512,
         ttl: Optional[int] = None,

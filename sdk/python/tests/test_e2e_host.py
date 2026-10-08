@@ -44,7 +44,7 @@ def client():
 
 @pytest.fixture()
 def sb(client):
-    box = client.create(image="debian:12-slim", cpu=0.5, memory=256, ttl=600, network={"pypi": True, "npm": False})
+    box = client.create(image="ubuntu:24.04", cpu=0.5, memory=256, ttl=600, network={"pypi": True, "npm": False})
     yield box
     try:
         box.release()
@@ -69,10 +69,10 @@ def test_files_roundtrip(sb):
 def test_trajlog_replay_returns_cached_result(sb):
     marker = f"/tmp/m1-replay-{uuid.uuid4().hex[:8]}"
     cmd = f"echo x >> {marker}; wc -l < {marker}"
-    r1 = sb.exec(cmd)
+    r1 = sb.exec(cmd, idx=0)
     assert r1.stdout == "1\n"
     assert not r1.replayed
-    r2 = sb.exec(cmd)
+    r2 = sb.exec(cmd, idx=0)
     assert r2.replayed, "identical re-issue must come from the trajectory log"
     assert r2.stdout == "1\n", "a re-execution would have appended a second line"
 

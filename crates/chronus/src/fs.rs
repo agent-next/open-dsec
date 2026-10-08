@@ -21,7 +21,10 @@ pub async fn read_file(path: &str) -> Result<Vec<u8>> {
     let p = require_abs(path)?;
     let md = ctx(tokio::fs::metadata(p).await, path)?;
     if md.len() > MAX_READ {
-        bail!("{path}: {} bytes exceeds the {MAX_READ}-byte read limit", md.len());
+        bail!(
+            "{path}: {} bytes exceeds the {MAX_READ}-byte read limit",
+            md.len()
+        );
     }
     ctx(tokio::fs::read(p).await, path)
 }
@@ -34,7 +37,10 @@ pub async fn write_file(path: &str, data: &[u8], mode: Option<u32>) -> Result<()
     ctx(tokio::fs::write(p, data).await, path)?;
     if let Some(m) = mode {
         use std::os::unix::fs::PermissionsExt;
-        ctx(tokio::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).await, path)?;
+        ctx(
+            tokio::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).await,
+            path,
+        )?;
     }
     Ok(())
 }
@@ -45,7 +51,11 @@ pub async fn list_dir(path: &str) -> Result<Vec<DirEntry>> {
     let mut out = vec![];
     while let Some(e) = ctx(rd.next_entry().await, path)? {
         let md = ctx(e.metadata().await, path)?;
-        out.push(DirEntry { name: e.file_name().to_string_lossy().into_owned(), is_dir: md.is_dir(), size: md.len() });
+        out.push(DirEntry {
+            name: e.file_name().to_string_lossy().into_owned(),
+            is_dir: md.is_dir(),
+            size: md.len(),
+        });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)

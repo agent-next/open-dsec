@@ -52,7 +52,11 @@ pub struct Aether {
 
 impl Aether {
     pub fn new(transport: Box<dyn Transport>, opts: SessionOpts) -> Arc<Aether> {
-        Arc::new(Aether { transport, sessions: Mutex::new(HashMap::new()), opts })
+        Arc::new(Aether {
+            transport,
+            sessions: Mutex::new(HashMap::new()),
+            opts,
+        })
     }
 
     async fn session(&self, id: &str) -> Result<Arc<Session>, String> {
@@ -60,7 +64,11 @@ impl Aether {
         if let Some(s) = m.get(id) {
             return Ok(s.clone());
         }
-        let s = Arc::new(Session::spawn(self.opts.clone()).await.map_err(|e| e.to_string())?);
+        let s = Arc::new(
+            Session::spawn(self.opts.clone())
+                .await
+                .map_err(|e| e.to_string())?,
+        );
         m.insert(id.to_string(), s.clone());
         Ok(s)
     }
@@ -108,7 +116,10 @@ pub struct AetherHandler(pub Arc<Aether>);
 
 impl Handler for AetherHandler {
     async fn handle(&self, req: Request, out: Responder) {
-        let session_id = req.params["session"].as_str().unwrap_or("default").to_string();
+        let session_id = req.params["session"]
+            .as_str()
+            .unwrap_or("default")
+            .to_string();
         match req.method.as_str() {
             // Streaming exec (P §3.3 "streaming I/O"): stdout/stderr chunks
             // then a final exit chunk.
@@ -118,13 +129,19 @@ impl Handler for AetherHandler {
                     Err(e) => return out.err("spawn_failed", e).await,
                 };
                 let cmd = req.params["cmd"].as_str().unwrap_or_default().to_string();
-                let timeout = req.params["timeout_ms"].as_u64().map(std::time::Duration::from_millis);
+                let timeout = req.params["timeout_ms"]
+                    .as_u64()
+                    .map(std::time::Duration::from_millis);
                 let (tx, mut rx) = tokio::sync::mpsc::channel::<chronus::Event>(64);
                 let run = tokio::spawn(async move { s.exec(&cmd, timeout, tx).await });
                 while let Some(ev) = rx.recv().await {
                     let v = match ev {
-                        chronus::Event::Stdout { data } => json!({ "stream": "stdout", "data": data }),
-                        chronus::Event::Stderr { data } => json!({ "stream": "stderr", "data": data }),
+                        chronus::Event::Stdout { data } => {
+                            json!({ "stream": "stdout", "data": data })
+                        }
+                        chronus::Event::Stderr { data } => {
+                            json!({ "stream": "stderr", "data": data })
+                        }
                         chronus::Event::Exit(e) => serde_json::to_value(e).unwrap(),
                     };
                     if !out.chunk(v).await {
@@ -143,7 +160,9 @@ impl Handler for AetherHandler {
                     Err(e) => return out.err("spawn_failed", e).await,
                 };
                 let cmd = req.params["cmd"].as_str().unwrap_or_default().to_string();
-                let timeout = req.params["timeout_ms"].as_u64().map(std::time::Duration::from_millis);
+                let timeout = req.params["timeout_ms"]
+                    .as_u64()
+                    .map(std::time::Duration::from_millis);
                 match s.exec_collect(&cmd, timeout).await {
                     Ok(r) => out.ok(serde_json::to_value(&r).unwrap()).await,
                     Err(e) => out.err("exec_failed", e.to_string()).await,
@@ -158,7 +177,10 @@ impl Handler for AetherHandler {
             }
             "write_file" => {
                 let p = req.params["path"].as_str().unwrap_or_default();
-                let data = req.params["data"].as_str().and_then(b64::decode).unwrap_or_default();
+                let data = req.params["data"]
+                    .as_str()
+                    .and_then(b64::decode)
+                    .unwrap_or_default();
                 let mode = req.params["mode"].as_u64().map(|m| m as u32);
                 match chronus::fs::write_file(p, &data, mode).await {
                     Ok(()) => out.ok(json!({})).await,
@@ -173,10 +195,11 @@ impl Handler for AetherHandler {
                 }
             }
             "http" => {
-                let r: chronus::http::HttpRequest = match serde_json::from_value(req.params["request"].clone()) {
-                    Ok(r) => r,
-                    Err(e) => return out.err("bad_request", e.to_string()).await,
-                };
+                let r: chronus::http::HttpRequest =
+                    match serde_json::from_value(req.params["request"].clone()) {
+                        Ok(r) => r,
+                        Err(e) => return out.err("bad_request", e.to_string()).await,
+                    };
                 match chronus::http::request(&r).await {
                     Ok(resp) => {
                         let v = json!({
@@ -193,7 +216,10 @@ impl Handler for AetherHandler {
                 self.0.end_session(&session_id).await;
                 out.ok(json!({})).await
             }
-            _ => out.err("not_found", format!("no such method {}", req.method)).await,
+            _ => {
+                out.err("not_found", format!("no such method {}", req.method))
+                    .await
+            }
         }
     }
 }
@@ -217,21 +243,40 @@ mod tests {
             let (stream, _) = l.accept().await.unwrap();
             a2.serve_connection(Box::new(stream)).await;
         });
-        (Client::from_stream(tokio::net::UnixStream::connect(&sock).await.unwrap()), a)
+        (
+            Client::from_stream(tokio::net::UnixStream::connect(&sock).await.unwrap()),
+            a,
+        )
     }
 
     #[tokio::test]
     async fn sessions_map_ids_to_independent_stateful_chronus_instances() {
         let (c, a) = aether_pair(SessionOpts::default()).await;
         // Session A persists state across calls...
-        c.call("exec_collect", json!({ "session": "A", "cmd": "cd /tmp && export K=v1" })).await.unwrap();
-        let r = c.call("exec_collect", json!({ "session": "A", "cmd": "echo $K" })).await.unwrap();
+        c.call(
+            "exec_collect",
+            json!({ "session": "A", "cmd": "cd /tmp && export K=v1" }),
+        )
+        .await
+        .unwrap();
+        let r = c
+            .call("exec_collect", json!({ "session": "A", "cmd": "echo $K" }))
+            .await
+            .unwrap();
         assert_eq!(r["stdout"].as_str().unwrap(), "v1\n");
         // ...session B is a different chronus instance with its own state.
-        let r = c.call("exec_collect", json!({ "session": "B", "cmd": "echo -n $K" })).await.unwrap();
+        let r = c
+            .call(
+                "exec_collect",
+                json!({ "session": "B", "cmd": "echo -n $K" }),
+            )
+            .await
+            .unwrap();
         assert_eq!(r["stdout"].as_str().unwrap(), "");
         assert_eq!(a.session_count().await, 2);
-        c.call("session_end", json!({ "session": "A" })).await.unwrap();
+        c.call("session_end", json!({ "session": "A" }))
+            .await
+            .unwrap();
         assert_eq!(a.session_count().await, 1);
     }
 
@@ -247,11 +292,20 @@ mod tests {
         )
         .await
         .unwrap();
-        let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!(chronus::pid_alive(pid));
-        c.call("session_end", json!({ "session": "s" })).await.unwrap();
+        c.call("session_end", json!({ "session": "s" }))
+            .await
+            .unwrap();
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(!chronus::pid_alive(pid), "session end must kill the chronus tree");
+        assert!(
+            !chronus::pid_alive(pid),
+            "session end must kill the chronus tree"
+        );
         assert_eq!(a.session_count().await, 0);
     }
 
@@ -259,22 +313,40 @@ mod tests {
     async fn channel_close_ends_every_session() {
         // P §3.3: the channel closing invalidates the sandbox runtime state.
         let (c, a) = aether_pair(SessionOpts::default()).await;
-        c.call("exec_collect", json!({ "session": "x", "cmd": "echo hi" })).await.unwrap();
-        c.call("exec_collect", json!({ "session": "y", "cmd": "echo hi" })).await.unwrap();
+        c.call("exec_collect", json!({ "session": "x", "cmd": "echo hi" }))
+            .await
+            .unwrap();
+        c.call("exec_collect", json!({ "session": "y", "cmd": "echo hi" }))
+            .await
+            .unwrap();
         assert_eq!(a.session_count().await, 2);
         drop(c); // closes the UDS stream
         tokio::time::sleep(Duration::from_millis(200)).await;
-        assert_eq!(a.session_count().await, 0, "all sessions die with the channel");
+        assert_eq!(
+            a.session_count().await,
+            0,
+            "all sessions die with the channel"
+        );
     }
 
     #[tokio::test]
     async fn streaming_exec_chunks_arrive_before_completion() {
         let (c, _a) = aether_pair(SessionOpts::default()).await;
-        let mut rx = c.stream("exec", json!({ "session": "s", "cmd": "echo one; sleep 1; echo two" })).await.unwrap();
+        let mut rx = c
+            .stream(
+                "exec",
+                json!({ "session": "s", "cmd": "echo one; sleep 1; echo two" }),
+            )
+            .await
+            .unwrap();
         let t0 = std::time::Instant::now();
         let first = rx.recv().await.unwrap().unwrap();
         assert_eq!(first["data"].as_str().unwrap(), "one\n");
-        assert!(t0.elapsed() < Duration::from_millis(800), "{:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < Duration::from_millis(800),
+            "{:?}",
+            t0.elapsed()
+        );
         let mut got_exit = false;
         while let Some(v) = rx.recv().await {
             if v.unwrap().get("code").is_some() {
@@ -296,9 +368,21 @@ mod tests {
         )
         .await
         .unwrap();
-        let r = c.call("read_file", json!({ "session": "s", "path": f.to_str().unwrap() })).await.unwrap();
+        let r = c
+            .call(
+                "read_file",
+                json!({ "session": "s", "path": f.to_str().unwrap() }),
+            )
+            .await
+            .unwrap();
         assert_eq!(b64::decode(r["data"].as_str().unwrap()).unwrap(), data);
-        let r = c.call("list_dir", json!({ "session": "s", "path": d.path().to_str().unwrap() })).await.unwrap();
+        let r = c
+            .call(
+                "list_dir",
+                json!({ "session": "s", "path": d.path().to_str().unwrap() }),
+            )
+            .await
+            .unwrap();
         assert_eq!(r["entries"][0]["name"].as_str().unwrap(), "f.bin");
         assert_eq!(r["entries"][0]["size"].as_u64().unwrap(), 256);
     }

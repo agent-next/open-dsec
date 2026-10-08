@@ -42,16 +42,31 @@ pub struct Request {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Reply {
-    Ok { id: u64, result: Value },
-    Err { id: u64, code: String, message: String },
-    Chunk { id: u64, item: Value },
-    End { id: u64 },
+    Ok {
+        id: u64,
+        result: Value,
+    },
+    Err {
+        id: u64,
+        code: String,
+        message: String,
+    },
+    Chunk {
+        id: u64,
+        item: Value,
+    },
+    End {
+        id: u64,
+    },
 }
 
 impl Reply {
     fn id(&self) -> u64 {
         match self {
-            Reply::Ok { id, .. } | Reply::Err { id, .. } | Reply::Chunk { id, .. } | Reply::End { id } => *id,
+            Reply::Ok { id, .. }
+            | Reply::Err { id, .. }
+            | Reply::Chunk { id, .. }
+            | Reply::End { id } => *id,
         }
     }
 }
@@ -72,7 +87,10 @@ impl std::fmt::Display for RpcError {
 
 impl RpcError {
     pub fn new(code: &str, message: impl Into<String>) -> Self {
-        RpcError { code: code.into(), message: message.into() }
+        RpcError {
+            code: code.into(),
+            message: message.into(),
+        }
     }
 }
 
@@ -91,7 +109,10 @@ pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Option<Ve
     }
     let n = u32::from_be_bytes(len) as usize;
     if n > MAX_FRAME {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("frame too large: {n}")));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("frame too large: {n}"),
+        ));
     }
     let mut buf = vec![0u8; n];
     r.read_exact(&mut buf).await?;
@@ -145,15 +166,31 @@ pub struct Responder {
 impl Responder {
     pub async fn ok(mut self, result: Value) {
         self.done = true;
-        let _ = self.tx.send(Reply::Ok { id: self.id, result }).await;
+        let _ = self
+            .tx
+            .send(Reply::Ok {
+                id: self.id,
+                result,
+            })
+            .await;
     }
     pub async fn err(mut self, code: &str, message: impl Into<String>) {
         self.done = true;
-        let _ = self.tx.send(Reply::Err { id: self.id, code: code.into(), message: message.into() }).await;
+        let _ = self
+            .tx
+            .send(Reply::Err {
+                id: self.id,
+                code: code.into(),
+                message: message.into(),
+            })
+            .await;
     }
     /// Send one streamed item; returns false if the peer is gone.
     pub async fn chunk(&self, item: Value) -> bool {
-        self.tx.send(Reply::Chunk { id: self.id, item }).await.is_ok()
+        self.tx
+            .send(Reply::Chunk { id: self.id, item })
+            .await
+            .is_ok()
     }
     pub async fn end(mut self) {
         self.done = true;
@@ -196,8 +233,14 @@ where
     });
     let mut rd = BufReader::new(rd);
     while let Ok(Some(buf)) = read_frame(&mut rd).await {
-        let Ok(req) = serde_json::from_slice::<Request>(&buf) else { break };
-        let out = Responder { id: req.id, tx: tx.clone(), done: false };
+        let Ok(req) = serde_json::from_slice::<Request>(&buf) else {
+            break;
+        };
+        let out = Responder {
+            id: req.id,
+            tx: tx.clone(),
+            done: false,
+        };
         let h = handler.clone();
         tokio::spawn(async move { h.handle(req, out).await });
     }
@@ -225,7 +268,9 @@ impl Listener {
             Listener::Tcp(l) => Ok(Addr::Tcp(l.local_addr()?.to_string())),
             Listener::Unix(l) => {
                 let a = l.local_addr()?;
-                Ok(Addr::Unix(a.as_pathname().map(|p| p.to_path_buf()).unwrap_or_default()))
+                Ok(Addr::Unix(
+                    a.as_pathname().map(|p| p.to_path_buf()).unwrap_or_default(),
+                ))
             }
         }
     }
@@ -300,7 +345,9 @@ impl Conn {
                         Ok(None) | Err(_) => break,
                     },
                 };
-                let Ok(rep) = serde_json::from_slice::<Reply>(&frame) else { break };
+                let Ok(rep) = serde_json::from_slice::<Reply>(&frame) else {
+                    break;
+                };
                 let id = rep.id();
                 // Each arm locks, finishes with the guard, then awaits if it
                 // must: a MutexGuard held across an await is not Send.
@@ -310,17 +357,15 @@ impl Conn {
                             let _ = tx.send(Ok(result));
                         }
                     }
-                    Reply::Err { code, message, .. } => {
-                        match pending.lock().unwrap().remove(&id) {
-                            Some(Pending::Call(tx)) => {
-                                let _ = tx.send(Err(RpcError { code, message }));
-                            }
-                            Some(Pending::Stream(tx)) => {
-                                let _ = tx.try_send(Err(RpcError { code, message }));
-                            }
-                            None => {}
+                    Reply::Err { code, message, .. } => match pending.lock().unwrap().remove(&id) {
+                        Some(Pending::Call(tx)) => {
+                            let _ = tx.send(Err(RpcError { code, message }));
                         }
-                    }
+                        Some(Pending::Stream(tx)) => {
+                            let _ = tx.try_send(Err(RpcError { code, message }));
+                        }
+                        None => {}
+                    },
                     Reply::Chunk { item, .. } => {
                         let tx = {
                             let map = pending.lock().unwrap();
@@ -441,12 +486,16 @@ impl Client {
         };
         let stream: Box<dyn Duplex> = match addr {
             Addr::Tcp(h) => {
-                let s = TcpStream::connect(h).await.map_err(|e| RpcError::new("unreachable", format!("{addr}: {e}")))?;
+                let s = TcpStream::connect(h)
+                    .await
+                    .map_err(|e| RpcError::new("unreachable", format!("{addr}: {e}")))?;
                 let _ = s.set_nodelay(true);
                 Box::new(s)
             }
             Addr::Unix(p) => Box::new(
-                UnixStream::connect(p).await.map_err(|e| RpcError::new("unreachable", format!("{addr}: {e}")))?,
+                UnixStream::connect(p)
+                    .await
+                    .map_err(|e| RpcError::new("unreachable", format!("{addr}: {e}")))?,
             ),
         };
         let c = Conn::new(stream);
@@ -467,21 +516,32 @@ impl Client {
         let conn = self.conn().await?;
         let req = self.request(method, params);
         let (tx, rx) = oneshot::channel();
-        conn.pending.lock().unwrap().insert(req.id, Pending::Call(tx));
+        conn.pending
+            .lock()
+            .unwrap()
+            .insert(req.id, Pending::Call(tx));
         if let Err(e) = conn.send(&req).await {
             conn.pending.lock().unwrap().remove(&req.id);
             return Err(RpcError::new("disconnected", e.to_string()));
         }
-        rx.await.unwrap_or_else(|_| Err(RpcError::new("disconnected", "connection closed")))
+        rx.await
+            .unwrap_or_else(|_| Err(RpcError::new("disconnected", "connection closed")))
     }
 
     /// Server-streaming call: items arrive on the receiver; it ends when the
     /// server sends `End` (channel closes) or yields an `Err` item on failure.
-    pub async fn stream(&self, method: &str, params: Value) -> Result<mpsc::Receiver<Result<Value, RpcError>>, RpcError> {
+    pub async fn stream(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<mpsc::Receiver<Result<Value, RpcError>>, RpcError> {
         let conn = self.conn().await?;
         let req = self.request(method, params);
         let (tx, rx) = mpsc::channel(256);
-        conn.pending.lock().unwrap().insert(req.id, Pending::Stream(tx));
+        conn.pending
+            .lock()
+            .unwrap()
+            .insert(req.id, Pending::Stream(tx));
         if let Err(e) = conn.send(&req).await {
             conn.pending.lock().unwrap().remove(&req.id);
             return Err(RpcError::new("disconnected", e.to_string()));
@@ -521,7 +581,9 @@ mod tests {
     }
 
     async fn tcp_pair() -> Client {
-        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap()).await.unwrap();
+        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
         let addr = l.local_addr().unwrap();
         tokio::spawn(l.serve(Arc::new(Echo)));
         Client::new(addr)
@@ -530,7 +592,10 @@ mod tests {
     #[tokio::test]
     async fn request_response_over_tcp_and_unix() {
         let c = tcp_pair().await;
-        assert_eq!(c.call("echo", json!({"a": 1})).await.unwrap(), json!({"a": 1}));
+        assert_eq!(
+            c.call("echo", json!({"a": 1})).await.unwrap(),
+            json!({"a": 1})
+        );
         let e = c.call("nope", json!(null)).await.unwrap_err();
         assert_eq!(e.code, "not_found");
 
@@ -569,13 +634,20 @@ mod tests {
             h.await.unwrap();
         }
         // 20 x 200ms serialized would be 4s; multiplexed is ~200ms.
-        assert!(t0.elapsed() < std::time::Duration::from_millis(1500), "{:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(1500),
+            "{:?}",
+            t0.elapsed()
+        );
     }
 
     #[tokio::test]
     async fn dropped_handler_reports_internal_error_and_token_is_carried() {
         let c = tcp_pair().await;
-        assert_eq!(c.call("drop", json!(null)).await.unwrap_err().code, "internal");
+        assert_eq!(
+            c.call("drop", json!(null)).await.unwrap_err().code,
+            "internal"
+        );
         let c = tcp_pair().await.with_token("t1");
         assert_eq!(c.call("token", json!(null)).await.unwrap(), json!("t1"));
     }

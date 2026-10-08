@@ -10,7 +10,10 @@ use dsec_rpc::Listener;
 
 fn arg(name: &str) -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -19,12 +22,19 @@ fn env_or(name: &str, default: &str) -> String {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let listen = arg("--listen").unwrap_or_else(|| env_or("DSEC_EDGE_LISTEN", "tcp://127.0.0.1:9104"));
+    let listen =
+        arg("--listen").unwrap_or_else(|| env_or("DSEC_EDGE_LISTEN", "tcp://127.0.0.1:9104"));
     let mut cfg = EdgeConfig {
         edge_id: arg("--id").unwrap_or_else(|| env_or("DSEC_EDGE_ID", "edge-1")),
-        docker_sock: arg("--docker-sock").unwrap_or_else(|| env_or("DSEC_DOCKER_SOCK", "/var/run/docker.sock".into())).into(),
-        data_dir: arg("--data-dir").unwrap_or_else(|| env_or("DSEC_EDGE_DATA", "/tmp/dsec-edge".into())).into(),
-        aether_bin: arg("--aether-bin").unwrap_or_else(|| env_or("DSEC_AETHER_BIN", "/usr/local/bin/dsec-aether".into())).into(),
+        docker_sock: arg("--docker-sock")
+            .unwrap_or_else(|| env_or("DSEC_DOCKER_SOCK", "/var/run/docker.sock"))
+            .into(),
+        data_dir: arg("--data-dir")
+            .unwrap_or_else(|| env_or("DSEC_EDGE_DATA", "/tmp/dsec-edge"))
+            .into(),
+        aether_bin: arg("--aether-bin")
+            .unwrap_or_else(|| env_or("DSEC_AETHER_BIN", "/usr/local/bin/dsec-aether"))
+            .into(),
         iam_addr: arg("--iam").unwrap_or_default(),
         ..Default::default()
     };

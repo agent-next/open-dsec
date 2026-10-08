@@ -34,11 +34,20 @@ pub struct CreateSpec {
 
 impl Docker {
     pub fn new(sock: impl AsRef<Path>) -> Docker {
-        Docker { sock: sock.as_ref().to_path_buf() }
+        Docker {
+            sock: sock.as_ref().to_path_buf(),
+        }
     }
 
-    async fn roundtrip(&self, method: &str, path: &str, body: Option<&Value>) -> Result<(u16, Value)> {
-        let mut s = UnixStream::connect(&self.sock).await.with_context(|| self.sock.display().to_string())?;
+    async fn roundtrip(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<(u16, Value)> {
+        let mut s = UnixStream::connect(&self.sock)
+            .await
+            .with_context(|| self.sock.display().to_string())?;
         let body = body.map(|v| v.to_string()).unwrap_or_default();
         let req = format!(
             "{method} {API}{path} HTTP/1.1\r\nHost: docker\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -48,12 +57,19 @@ impl Docker {
         let mut raw = vec![];
         s.read_to_end(&mut raw).await?;
         let (status, headers, rest) = parse_head(&raw)?;
-        let body_bytes = if headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("transfer-encoding")) {
+        let body_bytes = if headers
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("transfer-encoding"))
+        {
             dechunk(&rest)?
         } else {
             rest
         };
-        let v = if body_bytes.is_empty() { Value::Null } else { serde_json::from_slice(&body_bytes).context("docker body")? };
+        let v = if body_bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&body_bytes).context("docker body")?
+        };
         Ok((status, v))
     }
 
@@ -74,47 +90,86 @@ impl Docker {
                 "AutoRemove": false,
             },
         });
-        let (code, v) = self.roundtrip("POST", &format!("/containers/create?name={}", spec.name), Some(&body)).await?;
+        let (code, v) = self
+            .roundtrip(
+                "POST",
+                &format!("/containers/create?name={}", spec.name),
+                Some(&body),
+            )
+            .await?;
         if code >= 400 {
-            return Err(anyhow!("docker create {} ({}): {}", code, spec.image, v["message"].as_str().unwrap_or("?")));
+            return Err(anyhow!(
+                "docker create {} ({}): {}",
+                code,
+                spec.image,
+                v["message"].as_str().unwrap_or("?")
+            ));
         }
-        Ok(v["Id"].as_str().ok_or_else(|| anyhow!("docker create returned no Id"))?.to_string())
+        Ok(v["Id"]
+            .as_str()
+            .ok_or_else(|| anyhow!("docker create returned no Id"))?
+            .to_string())
     }
 
     pub async fn start(&self, id: &str) -> Result<()> {
-        let (code, v) = self.roundtrip("POST", &format!("/containers/{id}/start"), None).await?;
+        let (code, v) = self
+            .roundtrip("POST", &format!("/containers/{id}/start"), None)
+            .await?;
         if code >= 400 {
-            return Err(anyhow!("docker start {id} ({code}): {}", v["message"].as_str().unwrap_or("?")));
+            return Err(anyhow!(
+                "docker start {id} ({code}): {}",
+                v["message"].as_str().unwrap_or("?")
+            ));
         }
         Ok(())
     }
 
     pub async fn stop(&self, id: &str, timeout_s: u64) -> Result<()> {
-        let (code, v) = self.roundtrip("POST", &format!("/containers/{id}/stop?t={timeout_s}"), None).await?;
+        let (code, v) = self
+            .roundtrip(
+                "POST",
+                &format!("/containers/{id}/stop?t={timeout_s}"),
+                None,
+            )
+            .await?;
         if code >= 400 {
-            return Err(anyhow!("docker stop {id} ({code}): {}", v["message"].as_str().unwrap_or("?")));
+            return Err(anyhow!(
+                "docker stop {id} ({code}): {}",
+                v["message"].as_str().unwrap_or("?")
+            ));
         }
         Ok(())
     }
 
     pub async fn remove(&self, id: &str, force: bool) -> Result<()> {
         let (code, v) = self
-            .roundtrip("DELETE", &format!("/containers/{id}?v=1&force={force}"), None)
+            .roundtrip(
+                "DELETE",
+                &format!("/containers/{id}?v=1&force={force}"),
+                None,
+            )
             .await?;
         if code >= 400 {
-            return Err(anyhow!("docker rm {id} ({code}): {}", v["message"].as_str().unwrap_or("?")));
+            return Err(anyhow!(
+                "docker rm {id} ({code}): {}",
+                v["message"].as_str().unwrap_or("?")
+            ));
         }
         Ok(())
     }
 
     /// Inspect: (running, exit_code, started_ms).
     pub async fn inspect(&self, id: &str) -> Result<(bool, Option<i64>, Option<u64>)> {
-        let (code, v) = self.roundtrip("GET", &format!("/containers/{id}/json"), None).await?;
+        let (code, v) = self
+            .roundtrip("GET", &format!("/containers/{id}/json"), None)
+            .await?;
         if code >= 400 {
             return Err(anyhow!("docker inspect {id} ({code})"));
         }
         let running = v["State"]["Running"].as_bool().unwrap_or(false);
-        let exit = v["State"]["ExitCode"].as_i64().filter(|c| *c != 0 || !running);
+        let exit = v["State"]["ExitCode"]
+            .as_i64()
+            .filter(|c| *c != 0 || !running);
         let started = v["State"]["StartedAt"].as_str().and_then(parse_docker_ts);
         Ok((running, exit, started))
     }
@@ -148,8 +203,18 @@ fn parse_head(raw: &[u8]) -> Result<Head> {
 fn dechunk(mut b: &[u8]) -> Result<Vec<u8>> {
     let mut out = vec![];
     loop {
-        let nl = b.windows(2).position(|w| w == b"\r\n").ok_or_else(|| anyhow!("bad chunk"))?;
-        let n = usize::from_str_radix(std::str::from_utf8(&b[..nl])?.split(';').next().unwrap().trim(), 16)?;
+        let nl = b
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or_else(|| anyhow!("bad chunk"))?;
+        let n = usize::from_str_radix(
+            std::str::from_utf8(&b[..nl])?
+                .split(';')
+                .next()
+                .unwrap()
+                .trim(),
+            16,
+        )?;
         b = &b[nl + 2..];
         if n == 0 {
             return Ok(out);
@@ -198,7 +263,10 @@ mod tests {
 
     #[test]
     fn parses_docker_timestamps() {
-        assert_eq!(parse_docker_ts("2026-10-07T12:00:00.123456789Z"), Some(1791374400123));
+        assert_eq!(
+            parse_docker_ts("2026-10-07T12:00:00.123456789Z"),
+            Some(1791374400123)
+        );
         assert_eq!(parse_docker_ts("bogus"), None);
     }
 }

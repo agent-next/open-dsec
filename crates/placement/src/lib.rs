@@ -42,7 +42,10 @@ pub struct WatcherView {
 
 impl FleetView for WatcherView {
     async fn view(&self) -> Snapshot {
-        match dsec_rpc::Client::new(self.addr.clone()).call("snapshot", json!({})).await {
+        match dsec_rpc::Client::new(self.addr.clone())
+            .call("snapshot", json!({}))
+            .await
+        {
             Ok(v) => serde_json::from_value(v).unwrap_or_default(),
             Err(_) => Snapshot::default(),
         }
@@ -91,7 +94,12 @@ pub struct Opts {
 
 impl Default for Opts {
     fn default() -> Self {
-        Opts { d: 2, refresh: Duration::from_secs(1), overlay_ttl: Duration::from_millis(2500), overlay: true }
+        Opts {
+            d: 2,
+            refresh: Duration::from_secs(1),
+            overlay_ttl: Duration::from_millis(2500),
+            overlay: true,
+        }
     }
 }
 
@@ -155,26 +163,37 @@ impl<V: FleetView> Placement<V> {
     async fn refresh_if_stale(&self) {
         let stale = {
             let g = self.inner.lock().unwrap();
-            g.refreshed_at.is_none_or(|t| t.elapsed() >= self.opts.refresh)
+            g.refreshed_at
+                .is_none_or(|t| t.elapsed() >= self.opts.refresh)
         };
         if !stale {
             return;
         }
         let snap = self.view.view().await;
         let mut g = self.inner.lock().unwrap();
-        if g.refreshed_at.is_none_or(|t| t.elapsed() >= self.opts.refresh) {
+        if g.refreshed_at
+            .is_none_or(|t| t.elapsed() >= self.opts.refresh)
+        {
             g.snap = snap;
             g.refreshed_at = Some(Instant::now());
         }
     }
 
     fn overlay_load(g: &Inner, ttl: &Duration, edge: &str) -> u64 {
-        g.overlay.stamps.iter().filter(|(t, id)| id == edge && t.elapsed() < *ttl).count() as u64
+        g.overlay
+            .stamps
+            .iter()
+            .filter(|(t, id)| id == edge && t.elapsed() < *ttl)
+            .count() as u64
     }
 
     /// Filter + rank, excluding `excluded` edges (retry-on-reject bookkeeping,
     /// P §7). Records the pick in the in-flight overlay unless disabled.
-    pub async fn select_excluding(&self, req: &PlaceReq, excluded: &HashSet<String>) -> anyhow::Result<Choice> {
+    pub async fn select_excluding(
+        &self,
+        req: &PlaceReq,
+        excluded: &HashSet<String>,
+    ) -> anyhow::Result<Choice> {
         self.refresh_if_stale().await;
         let mut g = self.inner.lock().unwrap();
         let mut need: HashSet<String> = req.requirements.clone().into_iter().collect();
@@ -186,16 +205,26 @@ impl<V: FleetView> Placement<V> {
             .filter(|(id, v)| {
                 !excluded.contains(*id)
                     && v.healthy
-                    && v.status.as_ref().is_some_and(|s| need.iter().all(|n| s.capabilities.iter().any(|c| c == n)))
+                    && v.status
+                        .as_ref()
+                        .is_some_and(|s| need.iter().all(|n| s.capabilities.iter().any(|c| c == n)))
             })
             .map(|(id, v)| {
                 let base = v.status.as_ref().map_or(0, |s| s.sbx_used);
-                let over = if self.opts.overlay { Self::overlay_load(&g, &self.opts.overlay_ttl, id) } else { 0 };
+                let over = if self.opts.overlay {
+                    Self::overlay_load(&g, &self.opts.overlay_ttl, id)
+                } else {
+                    0
+                };
                 (id.clone(), v.addr.clone(), base + over)
             })
             .collect();
         if cands.is_empty() {
-            anyhow::bail!("no eligible edge (backend {:?}, excluded {:?})", req.backend, excluded);
+            anyhow::bail!(
+                "no eligible edge (backend {:?}, excluded {:?})",
+                req.backend,
+                excluded
+            );
         }
         // Power-of-d (P §7): sample d distinct candidates, take the least loaded.
         let d = self.opts.d.min(cands.len());
@@ -214,7 +243,11 @@ impl<V: FleetView> Placement<V> {
         if self.opts.overlay {
             g.overlay.stamps.push((Instant::now(), id.clone()));
         }
-        Ok(Choice { edge_id: id, addr, load })
+        Ok(Choice {
+            edge_id: id,
+            addr,
+            load,
+        })
     }
 
     pub async fn select(&self, req: &PlaceReq) -> anyhow::Result<Choice> {
@@ -223,7 +256,12 @@ impl<V: FleetView> Placement<V> {
 
     /// Drop overlay stamps that a refreshed snapshot must have absorbed.
     pub fn settle_overlay(&self) {
-        self.inner.lock().unwrap().overlay.stamps.retain(|(t, _)| t.elapsed() < self.opts.overlay_ttl);
+        self.inner
+            .lock()
+            .unwrap()
+            .overlay
+            .stamps
+            .retain(|(t, _)| t.elapsed() < self.opts.overlay_ttl);
     }
 
     /// Effective load as this instance sees it (tests and diagnostics).
@@ -250,22 +288,39 @@ impl<V: FleetView> dsec_rpc::Handler for PlacementService<V> {
         match req.method.as_str() {
             "select" => {
                 let pr = PlaceReq {
-                    backend: req.params["backend"].as_str().unwrap_or("container").to_string(),
+                    backend: req.params["backend"]
+                        .as_str()
+                        .unwrap_or("container")
+                        .to_string(),
                     requirements: req.params["requirements"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                 };
                 let excluded: HashSet<String> = req.params["excluded"]
                     .as_array()
-                    .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 match self.0.select_excluding(&pr, &excluded).await {
-                    Ok(c) => out.ok(json!({ "edge_id": c.edge_id, "addr": c.addr, "load": c.load })).await,
+                    Ok(c) => {
+                        out.ok(json!({ "edge_id": c.edge_id, "addr": c.addr, "load": c.load }))
+                            .await
+                    }
                     Err(e) => out.err("no_candidate", e.to_string()).await,
                 }
             }
-            _ => out.err("not_found", format!("no such method {}", req.method)).await,
+            _ => {
+                out.err("not_found", format!("no such method {}", req.method))
+                    .await
+            }
         }
     }
 }
@@ -307,22 +362,47 @@ mod tests {
     async fn filter_keeps_only_healthy_capable_edges() {
         let mut s = snap(3, 0, vec!["container".into()]);
         s.edges.get_mut("e1").unwrap().healthy = false;
-        s.edges.get_mut("e2").unwrap().status.as_mut().unwrap().capabilities.push("gpu".into());
+        s.edges
+            .get_mut("e2")
+            .unwrap()
+            .status
+            .as_mut()
+            .unwrap()
+            .capabilities
+            .push("gpu".into());
         let p = Placement::new(pinned(s), Opts::default());
         // e1 unhealthy, e2 is the only gpu node.
         for _ in 0..20 {
-            let c = p.select(&PlaceReq { backend: "container".into(), requirements: vec!["gpu".into()] }).await.unwrap();
+            let c = p
+                .select(&PlaceReq {
+                    backend: "container".into(),
+                    requirements: vec!["gpu".into()],
+                })
+                .await
+                .unwrap();
             assert_eq!(c.edge_id, "e2");
         }
         let mut seen = HashSet::new();
         for _ in 0..40 {
-            let c = p.select(&PlaceReq { backend: "container".into(), requirements: vec![] }).await.unwrap();
+            let c = p
+                .select(&PlaceReq {
+                    backend: "container".into(),
+                    requirements: vec![],
+                })
+                .await
+                .unwrap();
             seen.insert(c.edge_id);
         }
         assert!(!seen.contains("e1"), "unhealthy edge must never be picked");
         assert_eq!(seen, HashSet::from(["e0".into(), "e2".into()]));
         // A backend nobody provides yields no candidate.
-        assert!(p.select(&PlaceReq { backend: "microvm".into(), requirements: vec![] }).await.is_err());
+        assert!(p
+            .select(&PlaceReq {
+                backend: "microvm".into(),
+                requirements: vec![]
+            })
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -330,17 +410,33 @@ mod tests {
         // Frozen snapshot: every edge at load 0 forever (the watcher never
         // catches up). Without the overlay, the sampler would treat the node as
         // empty no matter how many of our own sandboxes are in flight there.
-        let p = Placement::new(pinned(snap(4, 0, vec!["container".into()])), Opts::default());
+        let p = Placement::new(
+            pinned(snap(4, 0, vec!["container".into()])),
+            Opts::default(),
+        );
         let mut counts: HashMap<String, u64> = HashMap::new();
         for _ in 0..40 {
-            let c = p.select(&PlaceReq { backend: "container".into(), requirements: vec![] }).await.unwrap();
+            let c = p
+                .select(&PlaceReq {
+                    backend: "container".into(),
+                    requirements: vec![],
+                })
+                .await
+                .unwrap();
             *counts.entry(c.edge_id).or_insert(0) += 1;
         }
         let max = counts.values().max().unwrap();
         let min = counts.values().min().unwrap();
-        assert!(max - min <= 2, "with overlay accounting the burst should stay balanced: {counts:?}");
+        assert!(
+            max - min <= 2,
+            "with overlay accounting the burst should stay balanced: {counts:?}"
+        );
         let loads = p.effective_loads().await;
-        assert_eq!(loads.values().sum::<u64>(), 40, "overlay must account for all 40 in-flight picks");
+        assert_eq!(
+            loads.values().sum::<u64>(),
+            40,
+            "overlay must account for all 40 in-flight picks"
+        );
     }
 
     #[tokio::test]
@@ -348,16 +444,29 @@ mod tests {
         let view = pinned(snap(2, 0, vec!["container".into()]));
         let p = Placement::new(
             view.clone(),
-            Opts { refresh: Duration::from_millis(30), overlay_ttl: Duration::from_millis(60), ..Default::default() },
+            Opts {
+                refresh: Duration::from_millis(30),
+                overlay_ttl: Duration::from_millis(60),
+                ..Default::default()
+            },
         );
         for _ in 0..6 {
-            p.select(&PlaceReq { backend: "container".into(), requirements: vec![] }).await.unwrap();
+            p.select(&PlaceReq {
+                backend: "container".into(),
+                requirements: vec![],
+            })
+            .await
+            .unwrap();
         }
         // The watcher "catches up": the pinned snapshot now shows 3/3.
         *view.0.write().await = snap(2, 3, vec!["container".into()]);
         tokio::time::sleep(Duration::from_millis(120)).await;
         let loads = p.effective_loads().await;
-        assert_eq!(loads.values().sum::<u64>(), 6, "stale overlay stamps must expire, not double-count");
+        assert_eq!(
+            loads.values().sum::<u64>(),
+            6,
+            "stale overlay stamps must expire, not double-count"
+        );
     }
 
     #[tokio::test]
@@ -366,9 +475,18 @@ mod tests {
         // placement replica: measured spread across 10 identical nodes.
         let n = 200usize;
         let mut spread: HashMap<String, u64> = HashMap::new();
-        let p = Placement::new(pinned(snap(10, 0, vec!["container".into()])), Opts::default());
+        let p = Placement::new(
+            pinned(snap(10, 0, vec!["container".into()])),
+            Opts::default(),
+        );
         for _ in 0..n {
-            let c = p.select(&PlaceReq { backend: "container".into(), requirements: vec![] }).await.unwrap();
+            let c = p
+                .select(&PlaceReq {
+                    backend: "container".into(),
+                    requirements: vec![],
+                })
+                .await
+                .unwrap();
             *spread.entry(c.edge_id).or_insert(0) += 1;
         }
         let max = *spread.values().max().unwrap();
@@ -381,13 +499,28 @@ mod tests {
         let mut herd: HashMap<String, u64> = HashMap::new();
         let greedy = Placement::new(
             pinned(snap(10, 0, vec!["container".into()])),
-            Opts { d: usize::MAX, overlay: false, refresh: Duration::from_secs(3600), ..Default::default() },
+            Opts {
+                d: usize::MAX,
+                overlay: false,
+                refresh: Duration::from_secs(3600),
+                ..Default::default()
+            },
         );
         for _ in 0..n {
-            let c = greedy.select(&PlaceReq { backend: "container".into(), requirements: vec![] }).await.unwrap();
+            let c = greedy
+                .select(&PlaceReq {
+                    backend: "container".into(),
+                    requirements: vec![],
+                })
+                .await
+                .unwrap();
             *herd.entry(c.edge_id).or_insert(0) += 1;
         }
-        assert_eq!(*herd.values().max().unwrap(), n as u64, "pure least-loaded must herd onto one node");
+        assert_eq!(
+            *herd.values().max().unwrap(),
+            n as u64,
+            "pure least-loaded must herd onto one node"
+        );
         assert_eq!(herd.len(), 1);
     }
 
@@ -395,15 +528,27 @@ mod tests {
     async fn independent_replicas_need_no_coordination() {
         // V4.1 §5.1.3: several placement replicas, zero coordination; none may
         // fail or starve the other. Their combined burst still spreads.
-        let views: Vec<Arc<PinnedView>> = (0..3).map(|_| pinned(snap(8, 0, vec!["container".into()]))).collect();
-        let reps: Vec<Placement<Arc<PinnedView>>> = views.into_iter().map(|v| Placement::new(v, Opts::default())).collect();
+        let views: Vec<Arc<PinnedView>> = (0..3)
+            .map(|_| pinned(snap(8, 0, vec!["container".into()])))
+            .collect();
+        let reps: Vec<Placement<Arc<PinnedView>>> = views
+            .into_iter()
+            .map(|v| Placement::new(v, Opts::default()))
+            .collect();
         let mut total: HashMap<String, u64> = HashMap::new();
         let mut handles = vec![];
         for r in reps {
             handles.push(tokio::spawn(async move {
                 let mut mine = vec![];
                 for _ in 0..30 {
-                    mine.push(r.select(&PlaceReq { backend: "container".into(), requirements: vec![] }).await.unwrap());
+                    mine.push(
+                        r.select(&PlaceReq {
+                            backend: "container".into(),
+                            requirements: vec![],
+                        })
+                        .await
+                        .unwrap(),
+                    );
                 }
                 mine
             }));
@@ -415,18 +560,31 @@ mod tests {
         }
         assert_eq!(total.values().sum::<u64>(), 90);
         let max = *total.values().max().unwrap();
-        assert!(max <= 90 / 8 + 6, "uncoordinated replicas still spread roughly evenly: {total:?}");
+        assert!(
+            max <= 90 / 8 + 6,
+            "uncoordinated replicas still spread roughly evenly: {total:?}"
+        );
     }
 
     #[tokio::test]
     async fn edge_rejection_retries_on_another_node() {
         // P §7: the edge keeps final admission; on rejection the caller
         // re-selects excluding the node that said no.
-        let p = Arc::new(Placement::new(pinned(snap(4, 0, vec!["container".into()])), Opts::default()));
+        let p = Arc::new(Placement::new(
+            pinned(snap(4, 0, vec!["container".into()])),
+            Opts::default(),
+        ));
         let mut excluded: HashSet<String> = HashSet::new();
         let mut accepted = vec![];
         for _ in 0..4 {
-            let c = p.select_excluding(&PlaceReq { backend: "container".into(), requirements: vec![] }, &excluded)
+            let c = p
+                .select_excluding(
+                    &PlaceReq {
+                        backend: "container".into(),
+                        requirements: vec![],
+                    },
+                    &excluded,
+                )
                 .await
                 .unwrap();
             if accepted.len() < 2 {
@@ -441,15 +599,32 @@ mod tests {
         assert_ne!(accepted[2], accepted[0]);
         assert_ne!(accepted[2], accepted[1]);
         // Every node refusing exhausts the candidates.
-        let all: HashSet<String> = ["e0", "e1", "e2", "e3"].into_iter().map(String::from).collect();
-        assert!(p.select_excluding(&PlaceReq { backend: "container".into(), requirements: vec![] }, &all).await.is_err());
+        let all: HashSet<String> = ["e0", "e1", "e2", "e3"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert!(p
+            .select_excluding(
+                &PlaceReq {
+                    backend: "container".into(),
+                    requirements: vec![]
+                },
+                &all
+            )
+            .await
+            .is_err());
     }
 
     #[tokio::test]
     async fn serves_select_over_rpc() {
-        let l = dsec_rpc::Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap()).await.unwrap();
+        let l = dsec_rpc::Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
         let addr = l.local_addr().unwrap();
-        let p = Arc::new(Placement::new(pinned(snap(3, 0, vec!["container".into()])), Opts::default()));
+        let p = Arc::new(Placement::new(
+            pinned(snap(3, 0, vec!["container".into()])),
+            Opts::default(),
+        ));
         tokio::spawn(l.serve(Arc::new(PlacementService(p))));
         let c = dsec_rpc::Client::new(addr);
         let r = c

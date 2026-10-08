@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use dsec_rpc::{Client, Listener};
 use dsec_aether::{Aether, SessionOpts, UnixTransport};
+use dsec_rpc::{Client, Listener};
 
 use super::*;
 
@@ -63,8 +63,15 @@ impl FakeDocker {
                         }
                         body.extend_from_slice(&buf[..m]);
                     }
-                    let v: Value = if body.is_empty() { Value::Null } else { serde_json::from_slice(&body).unwrap_or(Value::Null) };
-                    f3.requests.lock().await.push((method.clone(), path.clone(), v.clone()));
+                    let v: Value = if body.is_empty() {
+                        Value::Null
+                    } else {
+                        serde_json::from_slice(&body).unwrap_or(Value::Null)
+                    };
+                    f3.requests
+                        .lock()
+                        .await
+                        .push((method.clone(), path.clone(), v.clone()));
                     let (code, resp) = f3.route(&method, &path, &v).await;
                     let body = serde_json::to_string(&resp).unwrap_or_default();
                     let out = format!(
@@ -139,10 +146,17 @@ async fn stack(tweak: impl FnOnce(&mut EdgeConfig)) -> Stack {
     tweak(&mut c);
     let edge = Edge::new(c).unwrap();
     edge.start_background();
-    let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap()).await.unwrap();
+    let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
     let addr = l.local_addr().unwrap();
     tokio::spawn(l.serve(Arc::new(EdgeService(edge.clone()))));
-    Stack { edge, client: Client::new(addr), docker: Some(docker), _dir: dir }
+    Stack {
+        edge,
+        client: Client::new(addr),
+        docker: Some(docker),
+        _dir: dir,
+    }
 }
 
 async fn create(s: &Stack, extra: Value) -> Sandbox {
@@ -150,7 +164,7 @@ async fn create(s: &Stack, extra: Value) -> Sandbox {
         .client
         .call(
             "sandbox.create",
-            json!({ "user": "alice", "project": "root", "image": "debian:12-slim", "cpu_mc": 500, "mem_mb": 256, "network": {"pypi": true, "npm": false} }),
+            json!({ "user": "alice", "project": "root", "image": "ubuntu:24.04", "cpu_mc": 500, "mem_mb": 256, "network": {"pypi": true, "npm": false} }),
         )
         .await;
     if let Err(e) = &v {
@@ -198,7 +212,11 @@ async fn exec(s: &Stack, id: &str, session: &str, idx: u64, cmd: &str) -> Value 
 async fn create_uses_cpu_mem_limits_none_network_and_labels() {
     let s = stack(|_| {}).await;
     let m = create(&s, json!({})).await;
-    assert!(m.id.starts_with("sbx-e-test-"), "id must encode the edge: {}", m.id);
+    assert!(
+        m.id.starts_with("sbx-e-test-"),
+        "id must encode the edge: {}",
+        m.id
+    );
     assert_eq!(m.edge_id, "e-test");
     assert_eq!(m.status, SbxStatus::Running);
     let reqs = s.docker.as_ref().unwrap().requests().await;
@@ -213,12 +231,29 @@ async fn create_uses_cpu_mem_limits_none_network_and_labels() {
     assert_eq!(body["Labels"]["open-dsec"], "1");
     assert_eq!(body["Labels"]["open-dsec.sandbox"], m.id);
     let binds = body["HostConfig"]["Binds"].as_array().unwrap();
-    assert!(binds.iter().any(|b| b.as_str().unwrap().ends_with(":/run/dsec")), "{binds:?}");
-    assert!(binds.iter().any(|b| b.as_str().unwrap().contains("dsec-aether")), "{binds:?}");
-    assert_eq!(body["Cmd"][0], "dsec-aether");
+    assert!(
+        binds
+            .iter()
+            .any(|b| b.as_str().unwrap().ends_with(":/run/dsec")),
+        "{binds:?}"
+    );
+    assert!(
+        binds
+            .iter()
+            .any(|b| b.as_str().unwrap().contains("dsec-aether")),
+        "{binds:?}"
+    );
+    assert!(
+        body["Cmd"][0].as_str().unwrap().ends_with("/dsec-aether"),
+        "{:?}",
+        body["Cmd"]
+    );
     assert_eq!(body["Cmd"][1], "unix:///run/dsec/aether.sock");
     let _ = method;
-    s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -226,7 +261,8 @@ async fn admission_rejects_when_over_the_warning_threshold() {
     let s = stack(|c| {
         c.sbx_total = 2;
         c.cpu_total_mc = 1_000;
-    }).await;
+    })
+    .await;
     let a = create(&s, json!({})).await; // 500mc of 1000: 50%
     let e = s
         .client
@@ -239,14 +275,26 @@ async fn admission_rejects_when_over_the_warning_threshold() {
     // (used+req)=1000 > 900 threshold -> overloaded. And a 2nd sandbox alone
     // would also trip the count threshold (2 > 0.9*2).
     assert_eq!(e.code, "edge_overloaded", "{}", e.message);
-    s.client.call("sandbox.delete", json!({ "sandbox_id": a.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": a.id }))
+        .await
+        .unwrap();
     // After release, room again.
     let b = s
         .client
-        .call("sandbox.create", json!({ "user": "alice", "project": "root", "cpu_mc": 500, "mem_mb": 256 }))
+        .call(
+            "sandbox.create",
+            json!({ "user": "alice", "project": "root", "cpu_mc": 500, "mem_mb": 256 }),
+        )
         .await
         .unwrap();
-    s.client.call("sandbox.delete", json!({ "sandbox_id": b["id"].as_str().unwrap() })).await.unwrap();
+    s.client
+        .call(
+            "sandbox.delete",
+            json!({ "sandbox_id": b["id"].as_str().unwrap() }),
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -259,7 +307,11 @@ async fn crashed_environment_marks_failed_with_repercussion() {
     assert_eq!(r["stdout"].as_str().unwrap(), "alive\n");
     // The container dies (docker says not running, exit 137), then aether's
     // channel closes: failed trajectory + repercussion (V4.1 §5.1.3).
-    s.docker.as_ref().unwrap().running.store(false, std::sync::atomic::Ordering::SeqCst);
+    s.docker
+        .as_ref()
+        .unwrap()
+        .running
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     *s.docker.as_ref().unwrap().exit_code.lock().unwrap() = Some(137);
     h.abort();
     let mut meta = None;
@@ -274,22 +326,35 @@ async fn crashed_environment_marks_failed_with_repercussion() {
     }
     let g = meta.expect("sandbox must be marked failed after channel close");
     match g.status {
-        SbxStatus::Failed { reason, exit_code, repercussion } => {
+        SbxStatus::Failed {
+            reason,
+            exit_code,
+            repercussion,
+        } => {
             assert!(reason.contains("crash"), "{reason}");
             assert_eq!(exit_code, Some(137));
-            assert!(repercussion, "crashed environment must raise the repercussion signal");
+            assert!(
+                repercussion,
+                "crashed environment must raise the repercussion signal"
+            );
         }
         other => panic!("{other:?}"),
     }
     // Further operations are refused with the repercussion in the message.
     let e = s
         .client
-        .call("sandbox.exec", json!({ "sandbox_id": m.id, "session": "t", "idx": 1, "cmd": "echo no" }))
+        .call(
+            "sandbox.exec",
+            json!({ "sandbox_id": m.id, "session": "t", "idx": 1, "cmd": "echo no" }),
+        )
         .await
         .unwrap_err();
     assert_eq!(e.code, "sandbox_failed");
     assert!(e.message.contains("repercussion=true"), "{}", e.message);
-    s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -314,7 +379,10 @@ async fn channel_close_with_live_container_fails_without_repercussion() {
         SbxStatus::Failed { repercussion, .. } => assert!(!repercussion),
         other => panic!("{other:?}"),
     }
-    s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -330,10 +398,21 @@ async fn ttl_reaper_releases_idle_sandboxes() {
         .unwrap();
     let id = m["id"].as_str().unwrap().to_string();
     tokio::time::sleep(Duration::from_millis(600)).await;
-    assert!(s.edge.get(&id).await.is_none(), "TTL sandbox must be reaped and removed");
+    assert!(
+        s.edge.get(&id).await.is_none(),
+        "TTL sandbox must be reaped and removed"
+    );
     let reqs = s.docker.as_ref().unwrap().requests().await;
-    assert!(reqs.iter().any(|(m, p, _)| m == "POST" && p.contains("/stop")), "stop called");
-    assert!(reqs.iter().any(|(m, p, _)| m == "DELETE" && p.starts_with("/v1.43/containers/")), "remove called");
+    assert!(
+        reqs.iter()
+            .any(|(m, p, _)| m == "POST" && p.contains("/stop")),
+        "stop called"
+    );
+    assert!(
+        reqs.iter()
+            .any(|(m, p, _)| m == "DELETE" && p.starts_with("/v1.43/containers/")),
+        "remove called"
+    );
 }
 
 #[tokio::test]
@@ -345,15 +424,37 @@ async fn exec_state_persists_and_trajlog_replay_never_reexecutes() {
     let _ = std::fs::remove_file(&f);
     let cmd = format!("echo x >> {p}; wc -l < {p}", p = f.display());
     // Same session: cwd/env persist across idx 0 and 1.
-    let r = exec(&s, &m.id, "sess", 0, &format!("cd /tmp && export DSEC_T=1 && {cmd}")).await;
+    let r = exec(
+        &s,
+        &m.id,
+        "sess",
+        0,
+        &format!("cd /tmp && export DSEC_T=1 && {cmd}"),
+    )
+    .await;
     assert_eq!(r["stdout"].as_str().unwrap(), "1\n");
     let r = exec(&s, &m.id, "sess", 1, "echo $DSEC_T").await;
     assert_eq!(r["stdout"].as_str().unwrap(), "1\n");
     // Re-issue idx 0 verbatim (as a preempted client resuming): cached result,
     // never re-executed — the file would have two lines if it re-ran.
-    let r = exec(&s, &m.id, "sess", 0, &format!("cd /tmp && export DSEC_T=1 && {cmd}")).await;
-    assert_eq!(r["replayed"].as_bool(), Some(true), "must come from the trajectory log");
-    assert_eq!(r["stdout"].as_str().unwrap(), "1\n", "cached stdout, not a re-run");
+    let r = exec(
+        &s,
+        &m.id,
+        "sess",
+        0,
+        &format!("cd /tmp && export DSEC_T=1 && {cmd}"),
+    )
+    .await;
+    assert_eq!(
+        r["replayed"].as_bool(),
+        Some(true),
+        "must come from the trajectory log"
+    );
+    assert_eq!(
+        r["stdout"].as_str().unwrap(),
+        "1\n",
+        "cached stdout, not a re-run"
+    );
     // Divergence: same identity, different command -> surfaced, not replayed.
     let e = s
         .client
@@ -362,7 +463,11 @@ async fn exec_state_persists_and_trajlog_replay_never_reexecutes() {
         .unwrap_err();
     assert_eq!(e.code, "traj_diverged");
     // Provenance query (V4 §5.2.5): ordered entries with user attribution.
-    let traj = s.client.call("sandbox.traj", json!({ "sandbox_id": m.id })).await.unwrap();
+    let traj = s
+        .client
+        .call("sandbox.traj", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
     let entries = traj["entries"].as_array().unwrap();
     assert_eq!(entries.len(), 2);
     assert_eq!(entries[0]["seq"], 1);
@@ -370,7 +475,10 @@ async fn exec_state_persists_and_trajlog_replay_never_reexecutes() {
     assert_eq!(entries[0]["op"], "exec");
     h.abort();
     let _ = std::fs::remove_file(&f);
-    s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -383,7 +491,10 @@ async fn status_reports_counts_for_the_watcher() {
         .unwrap();
     let _b = s
         .client
-        .call("sandbox.create", json!({ "user": "bob", "project": "root", "cpu_mc": 500, "mem_mb": 256 }))
+        .call(
+            "sandbox.create",
+            json!({ "user": "bob", "project": "root", "cpu_mc": 500, "mem_mb": 256 }),
+        )
         .await
         .unwrap();
     let st = s.edge.status().await;
@@ -395,7 +506,10 @@ async fn status_reports_counts_for_the_watcher() {
     assert_eq!(st["capabilities"][0], "container");
     let parsed: dsec_watcher::EdgeStatus = serde_json::from_value(st).unwrap();
     assert_eq!(parsed.cpu_used_mc, 1000);
-    s.client.call("sandbox.delete", json!({ "sandbox_id": a["id"] })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": a["id"] }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -405,7 +519,10 @@ async fn streaming_exec_chunks_flow_through_the_edge() {
     let h = attach_aether(&s, &m.id).await;
     let mut rx = s
         .client
-        .stream("sandbox.stream", json!({ "sandbox_id": m.id, "session": "t", "cmd": "echo one; sleep 1; echo two" }))
+        .stream(
+            "sandbox.stream",
+            json!({ "sandbox_id": m.id, "session": "t", "cmd": "echo one; sleep 1; echo two" }),
+        )
         .await
         .unwrap();
     let t0 = std::time::Instant::now();
@@ -420,7 +537,10 @@ async fn streaming_exec_chunks_flow_through_the_edge() {
     }
     assert!(exit);
     h.abort();
-    s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -428,11 +548,16 @@ async fn delete_stops_removes_and_cleans_state() {
     let s = stack(|_| {}).await;
     let m = create(&s, json!({})).await;
     let dir = s.cfg_active_dir(&m.id).await;
-    s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+    s.client
+        .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+        .await
+        .unwrap();
     assert!(s.edge.get(&m.id).await.is_none());
     assert!(!dir.exists(), "sandbox dir must be removed");
     let reqs = s.docker.as_ref().unwrap().requests().await;
-    assert!(reqs.iter().any(|(m, p, _)| m == "POST" && p.contains("/stop")));
+    assert!(reqs
+        .iter()
+        .any(|(m, p, _)| m == "POST" && p.contains("/stop")));
     assert!(reqs.iter().any(|(m, _, _)| m == "DELETE"));
 }
 
@@ -448,7 +573,8 @@ mod host {
 
     fn aether_bin() -> String {
         std::env::var("DSEC_AETHER_BIN").unwrap_or_else(|_| {
-            let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/dsec-aether");
+            let p =
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/dsec-aether");
             p.to_string_lossy().into_owned()
         })
     }
@@ -465,13 +591,23 @@ mod host {
 
     async fn host_stack() -> Stack {
         let dir = tempfile::tempdir().unwrap();
-        let c = EdgeConfig { data_dir: host_cfg().data_dir, ..host_cfg() };
+        let c = EdgeConfig {
+            data_dir: host_cfg().data_dir,
+            ..host_cfg()
+        };
         let edge = Edge::new(c).unwrap();
         edge.start_background();
-        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap()).await.unwrap();
+        let l = Listener::bind(&"tcp://127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
         let addr = l.local_addr().unwrap();
         tokio::spawn(l.serve(Arc::new(EdgeService(edge.clone()))));
-        Stack { edge, client: Client::new(addr), docker: None, _dir: dir }
+        Stack {
+            edge,
+            client: Client::new(addr),
+            docker: None,
+            _dir: dir,
+        }
     }
 
     /// Real container: network none, cpu/mem limits, aether + chronus work,
@@ -484,7 +620,7 @@ mod host {
             s.client
                 .call(
                     "sandbox.create",
-                    json!({ "user": "alice", "project": "root", "image": "debian:12-slim", "cpu_mc": 500, "mem_mb": 256, "ttl_ms": 600_000 }),
+                    json!({ "user": "alice", "project": "root", "image": "ubuntu:24.04", "cpu_mc": 500, "mem_mb": 256, "ttl_ms": 600_000 }),
                 )
                 .await
                 .unwrap(),
@@ -508,7 +644,7 @@ mod host {
         // Network none: only the loopback interface exists.
         let r = s
             .client
-            .call("sandbox.exec", json!({ "sandbox_id": m.id, "session": "t", "idx": 1, "cmd": "cat /sys/class/net/ | tr '\\n' ' '", "user": "alice" }))
+            .call("sandbox.exec", json!({ "sandbox_id": m.id, "session": "t", "idx": 1, "cmd": "ls /sys/class/net | tr '\\n' ' '", "user": "alice" }))
             .await
             .unwrap();
         assert_eq!(r["stdout"].as_str().unwrap(), "lo ");
@@ -519,7 +655,10 @@ mod host {
             .await
             .unwrap();
         assert_eq!(r["stdout"].as_str().unwrap(), "50000 100000\n");
-        s.client.call("sandbox.delete", json!({ "sandbox_id": m.id })).await.unwrap();
+        s.client
+            .call("sandbox.delete", json!({ "sandbox_id": m.id }))
+            .await
+            .unwrap();
         assert!(s.edge.get(&m.id).await.is_none());
     }
 }

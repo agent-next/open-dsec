@@ -34,7 +34,7 @@ scripts/dev-up.sh                 # iam + watcher + placement + apiserver + edge
 from libdsec import Client
 
 c = Client("127.0.0.1:9100", token="<dev token>")
-sb = c.create(image="debian:12-slim", cpu=0.5, memory=256, ttl=600,
+sb = c.create(image="ubuntu:24.04", cpu=0.5, memory=256, ttl=600,
               network={"pypi": True, "npm": False})
 r = sb.exec("cd /tmp && export T=1 && echo hi")   # state persists across execs
 r = sb.exec("pwd; echo $T")                       # -> /tmp

@@ -34,14 +34,24 @@ pub struct HttpResponse {
 pub const MAX_BODY: usize = 8 * 1024 * 1024;
 
 pub async fn request(req: &HttpRequest) -> Result<HttpResponse> {
-    let rest = req.url.strip_prefix("http://").ok_or_else(|| anyhow!("only http:// URLs are supported"))?;
+    let rest = req
+        .url
+        .strip_prefix("http://")
+        .ok_or_else(|| anyhow!("only http:// URLs are supported"))?;
     let (hostport, path) = match rest.find('/') {
         Some(i) => (&rest[..i], &rest[i..]),
         None => (rest, "/"),
     };
-    let target = if hostport.contains(':') { hostport.to_string() } else { format!("{hostport}:80") };
+    let target = if hostport.contains(':') {
+        hostport.to_string()
+    } else {
+        format!("{hostport}:80")
+    };
     let mut s = TcpStream::connect(&target).await?;
-    let mut head = format!("{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n", req.method, path, hostport);
+    let mut head = format!(
+        "{} {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n",
+        req.method, path, hostport
+    );
     for (k, v) in &req.headers {
         head.push_str(&format!("{k}: {v}\r\n"));
     }
@@ -67,26 +77,50 @@ pub async fn request(req: &HttpRequest) -> Result<HttpResponse> {
 }
 
 fn parse_response(raw: &[u8]) -> Result<HttpResponse> {
-    let split = raw.windows(4).position(|w| w == b"\r\n\r\n").ok_or_else(|| anyhow!("malformed response"))?;
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| anyhow!("malformed response"))?;
     let head = std::str::from_utf8(&raw[..split])?;
     let mut lines = head.split("\r\n");
-    let status: u16 = lines.next().and_then(|l| l.split_whitespace().nth(1)).and_then(|s| s.parse().ok()).ok_or_else(|| anyhow!("bad status line"))?;
+    let status: u16 = lines
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| anyhow!("bad status line"))?;
     let headers: BTreeMap<String, String> = lines
         .filter_map(|l| l.split_once(':'))
         .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
         .collect();
     let mut body = raw[split + 4..].to_vec();
-    if headers.get("transfer-encoding").is_some_and(|v| v.contains("chunked")) {
+    if headers
+        .get("transfer-encoding")
+        .is_some_and(|v| v.contains("chunked"))
+    {
         body = dechunk(&body)?;
     }
-    Ok(HttpResponse { status, headers, body })
+    Ok(HttpResponse {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn dechunk(mut b: &[u8]) -> Result<Vec<u8>> {
     let mut out = vec![];
     loop {
-        let nl = b.windows(2).position(|w| w == b"\r\n").ok_or_else(|| anyhow!("bad chunk"))?;
-        let n = usize::from_str_radix(std::str::from_utf8(&b[..nl])?.split(';').next().unwrap().trim(), 16)?;
+        let nl = b
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .ok_or_else(|| anyhow!("bad chunk"))?;
+        let n = usize::from_str_radix(
+            std::str::from_utf8(&b[..nl])?
+                .split(';')
+                .next()
+                .unwrap()
+                .trim(),
+            16,
+        )?;
         b = &b[nl + 2..];
         if n == 0 {
             return Ok(out);

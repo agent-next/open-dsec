@@ -64,9 +64,17 @@ impl TrajLog {
             if p.extension().and_then(|s| s.to_str()) != Some("jsonl") {
                 continue;
             }
-            let Some(id) = p.file_stem().and_then(|s| s.to_str()) else { continue };
-            let mut log = Log { next_seq: 1, by_key: HashMap::new() };
-            for line in std::fs::read(&p).context("read log")?.split(|b| *b == b'\n') {
+            let Some(id) = p.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let mut log = Log {
+                next_seq: 1,
+                by_key: HashMap::new(),
+            };
+            for line in std::fs::read(&p)
+                .context("read log")?
+                .split(|b| *b == b'\n')
+            {
                 if line.is_empty() {
                     continue;
                 }
@@ -77,7 +85,10 @@ impl TrajLog {
             }
             state.insert(id.to_string(), log);
         }
-        Ok(TrajLog { dir, state: Mutex::new(state) })
+        Ok(TrajLog {
+            dir,
+            state: Mutex::new(state),
+        })
     }
 
     fn path(&self, sandbox: &str) -> PathBuf {
@@ -89,15 +100,22 @@ impl TrajLog {
     /// flushed to local disk before returning (V4: "persistently recording").
     pub fn record(&self, sandbox: &str, entry: Entry) -> Result<u64> {
         let mut st = self.state.lock().unwrap();
-        let log = st.entry(sandbox.to_string()).or_insert_with(|| Log { next_seq: 1, by_key: HashMap::new() });
+        let log = st.entry(sandbox.to_string()).or_insert_with(|| Log {
+            next_seq: 1,
+            by_key: HashMap::new(),
+        });
         let seq = log.next_seq;
         let mut entry = entry;
         entry.seq = seq;
         log.next_seq += 1;
-        log.by_key.insert((entry.session.clone(), entry.idx), entry.clone());
+        log.by_key
+            .insert((entry.session.clone(), entry.idx), entry.clone());
         let line = serde_json::to_vec(&entry).context("serialize entry")?;
         use std::io::Write;
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(self.path(sandbox))?;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.path(sandbox))?;
         f.write_all(&line)?;
         f.write_all(b"\n")?;
         f.sync_data().context("fsync trajectory")?;
@@ -131,7 +149,9 @@ impl TrajLog {
     /// filtered by session and/or op.
     pub fn query(&self, sandbox: &str, session: Option<&str>, op: Option<&str>) -> Vec<Entry> {
         let st = self.state.lock().unwrap();
-        let Some(log) = st.get(sandbox) else { return vec![] };
+        let Some(log) = st.get(sandbox) else {
+            return vec![];
+        };
         let mut v: Vec<Entry> = log
             .by_key
             .values()
@@ -163,17 +183,38 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn entry(session: &str, idx: u64, op: &str, params: serde_json::Value, result: serde_json::Value) -> Entry {
-        Entry { seq: 0, ts_ms: 0, user: "u1".into(), session: session.into(), idx, op: op.into(), params, result }
+    fn entry(
+        session: &str,
+        idx: u64,
+        op: &str,
+        params: serde_json::Value,
+        result: serde_json::Value,
+    ) -> Entry {
+        Entry {
+            seq: 0,
+            ts_ms: 0,
+            user: "u1".into(),
+            session: session.into(),
+            idx,
+            op: op.into(),
+            params,
+            result,
+        }
     }
 
     #[test]
     fn entries_are_ordered_and_globally_sequenced() {
         let d = tempfile::tempdir().unwrap();
         let t = TrajLog::open(d.path()).unwrap();
-        let a = t.record("sbx", entry("s", 0, "exec", json!("a"), json!(1))).unwrap();
-        let b = t.record("sbx", entry("s", 1, "exec", json!("b"), json!(2))).unwrap();
-        let c = t.record("sbx", entry("t", 0, "exec", json!("c"), json!(3))).unwrap();
+        let a = t
+            .record("sbx", entry("s", 0, "exec", json!("a"), json!(1)))
+            .unwrap();
+        let b = t
+            .record("sbx", entry("s", 1, "exec", json!("b"), json!(2)))
+            .unwrap();
+        let c = t
+            .record("sbx", entry("t", 0, "exec", json!("c"), json!(3)))
+            .unwrap();
         assert!((a, b, c) == (1, 2, 3));
         let q = t.query("sbx", None, None);
         assert_eq!(q.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![1, 2, 3]);
@@ -186,14 +227,33 @@ mod tests {
     fn fast_forward_replays_identical_and_flags_divergence() {
         let d = tempfile::tempdir().unwrap();
         let t = TrajLog::open(d.path()).unwrap();
-        t.record("sbx", entry("s", 0, "exec", json!("echo x >> f"), json!({"stdout": "", "code": 0}))).unwrap();
+        t.record(
+            "sbx",
+            entry(
+                "s",
+                0,
+                "exec",
+                json!("echo x >> f"),
+                json!({"stdout": "", "code": 0}),
+            ),
+        )
+        .unwrap();
         match t.replay("sbx", "s", 0, "exec", &json!("echo x >> f")) {
             Replay::Hit(e) => assert_eq!(e.result["code"], 0),
             other => panic!("{other:?}"),
         }
-        assert!(matches!(t.replay("sbx", "s", 0, "exec", &json!("echo y >> f")), Replay::Diverged(_)));
-        assert!(matches!(t.replay("sbx", "s", 1, "exec", &json!("echo x >> f")), Replay::Miss));
-        assert!(matches!(t.replay("other", "s", 0, "exec", &json!("echo x >> f")), Replay::Miss));
+        assert!(matches!(
+            t.replay("sbx", "s", 0, "exec", &json!("echo y >> f")),
+            Replay::Diverged(_)
+        ));
+        assert!(matches!(
+            t.replay("sbx", "s", 1, "exec", &json!("echo x >> f")),
+            Replay::Miss
+        ));
+        assert!(matches!(
+            t.replay("other", "s", 0, "exec", &json!("echo x >> f")),
+            Replay::Miss
+        ));
     }
 
     #[test]
@@ -201,13 +261,22 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         {
             let t = TrajLog::open(d.path()).unwrap();
-            t.record("sbx", entry("s", 0, "exec", json!("one"), json!(null))).unwrap();
-            t.record("sbx", entry("s", 1, "exec", json!("two"), json!(null))).unwrap();
+            t.record("sbx", entry("s", 0, "exec", json!("one"), json!(null)))
+                .unwrap();
+            t.record("sbx", entry("s", 1, "exec", json!("two"), json!(null)))
+                .unwrap();
         }
         let t = TrajLog::open(d.path()).unwrap();
-        assert!(matches!(t.replay("sbx", "s", 1, "exec", &json!("two")), Replay::Hit(_)));
+        assert!(matches!(
+            t.replay("sbx", "s", 1, "exec", &json!("two")),
+            Replay::Hit(_)
+        ));
         // Ordering continues from the reloaded max seq.
-        assert_eq!(t.record("sbx", entry("s", 2, "exec", json!("three"), json!(null))).unwrap(), 3);
+        assert_eq!(
+            t.record("sbx", entry("s", 2, "exec", json!("three"), json!(null)))
+                .unwrap(),
+            3
+        );
     }
 
     #[test]
@@ -216,7 +285,11 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         {
             let t = TrajLog::open(d.path()).unwrap();
-            t.record("sbx", entry("s", 0, "exec", json!("persist"), json!({"ok": true}))).unwrap();
+            t.record(
+                "sbx",
+                entry("s", 0, "exec", json!("persist"), json!({"ok": true})),
+            )
+            .unwrap();
         }
         let raw = std::fs::read_to_string(d.path().join("sbx.jsonl")).unwrap();
         assert!(raw.contains("persist"), "entry must be on disk, got: {raw}");
