@@ -23,7 +23,15 @@ Primary sources (the only authority; every design claim in this repo cites one):
   internal env QC platform, the RL framework itself. Stand-ins are labeled.
 - BGP/ECMP VIP load balancing on physical switches ([P] §7) — documented, not built.
 
-## Architecture (1:1 component map)
+## Architecture (component map)
+
+The Fidelity column is the **target** for each component, not a status. As of
+v0.0.1 only the milestone-M1 rows are implemented (libdsec, apiserver, IAM,
+placement, watcher, rpc, aether, chronus, trajlog, the edge's Docker container
+backend); the SDK ships create/exec/fs/stream/release today. Paths below that do
+not exist in the tree yet (`images/`, `patches/`, `deploy/`, `guest/`,
+`security/`, `rl/`, most `backend/*` modules) are planned. Deviations from
+the paper are in `docs/DEVIATIONS.md`.
 
 | DSec component | Source | open-dsec | Fidelity |
 | --- | --- | --- | --- |
@@ -66,12 +74,12 @@ Primary sources (the only authority; every design claim in this repo cites one):
 | E5 | Access-control red-team (P §6.4 attacks: chronus socket forging, log reading, /bin/bash overwrite, port scan, proxy exfil, `yes` flood) | each attack must fail, with a test |
 
 Hardware (honest): dev host i9-14900K (hybrid P/E, SMT, 62 GB, RTX 5090, kernel 6.14),
-DigitalOcean droplets (nested KVM), on-demand Lambda. Paper used 10× EPYC 9655 nodes. Absolute numbers will differ; we compare ratios.
+DigitalOcean droplets (nested KVM), on-demand Lambda Labs GPU instances. Paper used 10× EPYC 9655 nodes. Absolute numbers will differ; we compare ratios.
 
 ## Milestones
 
-- M0 spec + skeleton (this PR).
-- M1 control plane end-to-end on one host: apiserver + iam + placement + watcher + edge + container backend (plain Docker) + aether + chronus + trajlog + libdsec.
+- M0 spec + skeleton (done).
+- M1 (done, v0.0.1) control plane end-to-end on one host: apiserver + iam + placement + watcher + edge + container backend (plain Docker) + aether + chronus + trajlog + libdsec.
 - M2 image path: EROFS converter, layer composition, dockerd patch, shared-FS on-demand (3FS).
 - M3 microVM backend: Firecracker + EROFS ro devices + overlaybd/ublk + pmem/DAX + DAMON/FPR + snapshot pause/resume.
 - M4 QoS + security: SCHED_IDLE/core-sched, AppArmor, eBPF allowlist, output cap, repercussion.

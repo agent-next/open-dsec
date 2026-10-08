@@ -6,7 +6,7 @@ updates for these live in `SPEC.md`.
 | # | What | Why | Source |
 | - | ---- | ---- | ------ |
 | 1 | Containers run under plain host Docker, not "Docker inside QEMU/libvirt worker VMs" | M1 scope (single host, no worker-VM layer); the worker-VM/sub-NUMA hardening is later work | P §3.3 |
-| 2 | `dsec-aether` is a dynamically linked glibc binary; default sandbox image is `ubuntu:24.04` | The host toolchain links against glibc ≥ 2.39 (bookworm ships 2.36), and static-musl target download was blocked by flaky network this session. A musl-static aether (any-image compatible) replaces this when `rustup target add x86_64-unknown-linux-musl` succeeds | — |
+| 2 | `dsec-aether` is a dynamically linked glibc binary; default sandbox image is `ubuntu:24.04` | The host toolchain links against glibc ≥ 2.39 (bookworm ships 2.36), and the static-musl Rust target could not be downloaded in the build environment at the time. A musl-static aether (any-image compatible) replaces this when `rustup target add x86_64-unknown-linux-musl` succeeds | — |
 | 3 | Trajectory replay keyed by (sandbox, terminal session, client-side op index, op, params) | V4 §5.2.5 does not publish the exact identity of "previously completed commands"; positional identity is the minimal scheme that never re-runs non-idempotent ops and surfaces divergence as an error instead | V4 §5.2.5 |
 | 4 | IAM state persists to a JSON file (atomic rewrite) | DSec's IAM backing store is unpublished; M1 needs durability across dev-up restarts only | P §3.2 |
 | 5 | Placement load metric = running sandboxes per node | The paper says "least loaded" without publishing the metric; watcher's counts are the M1 signal | P §3.2, §7 |
