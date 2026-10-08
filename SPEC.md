@@ -15,8 +15,6 @@ Primary sources (the only authority; every design claim in this repo cites one):
 - [AENV] DeepSeek's released storage code: kvcache-ai/AgentENV `storage/overlaybd`
   (Rust overlaybd + ublk; cited in [P] §7).
 
-Section-by-section extracted facts: `docs/paper-notes.md`.
-
 ## Non-goals
 
 - Production scale (160 nodes / 380K concurrent / 5K creates/s). We reproduce the
@@ -54,7 +52,7 @@ Section-by-section extracted facts: `docs/paper-notes.md`.
 | AppArmor per-sandbox profiles (chronus logs/sockets, /bin/bash) | P §6.5, V4.1 | `security/apparmor` | 1:1 |
 | eBPF per-sandbox network allowlist (IP/port/proto; domain/mirror groups; live update) | P §6.5 | `security/ebpf` | 1:1 |
 | Repercussion signal on env crash | V4.1 | `crates/edge` + SDK | 1:1 |
-| Cloud bursting (>80% util → cloud VMs; cloud-eligible = image set covered) | P §3.4 | `crates/placement` | 1:1 logic; cloud = DO/Lambda, credit-covered only |
+| Cloud bursting (>80% util → cloud VMs; cloud-eligible = image set covered) | P §3.4 | `crates/placement` | 1:1 logic; cloud = DigitalOcean / Lambda VMs |
 | Scale units (shards) | V4.1 | config | 1:1 logic |
 
 ## Experiments to reproduce ([P] §8), scaled to our hardware
@@ -68,7 +66,7 @@ Section-by-section extracted facts: `docs/paper-notes.md`.
 | E5 | Access-control red-team (P §6.4 attacks: chronus socket forging, log reading, /bin/bash overwrite, port scan, proxy exfil, `yes` flood) | each attack must fail, with a test |
 
 Hardware (honest): dev host i9-14900K (hybrid P/E, SMT, 62 GB, RTX 5090, kernel 6.14),
-DO droplets (nested KVM), on-demand Lambda. Paper used 10× EPYC 9655 nodes. Absolute numbers will differ; we compare ratios.
+DigitalOcean droplets (nested KVM), on-demand Lambda. Paper used 10× EPYC 9655 nodes. Absolute numbers will differ; we compare ratios.
 
 ## Milestones
 

@@ -1,7 +1,7 @@
 .PHONY: check host-check
 
 # Everything here runs unprivileged, without docker/KVM (AGENTS.md).
-# dsec-vmm is owned by the M3 worker; check what M1 owns.
+# dsec-vmm is M3 work in progress; check what M1 ships.
 check:
 	cargo fmt --all --check
 	cargo clippy --workspace --exclude dsec-vmm --all-targets -- -D warnings
