@@ -315,6 +315,12 @@ impl Edge {
         self.sbx.lock().await.get(id).map(|e| e.meta.clone())
     }
 
+    /// Directory holding the sandbox's aether socket (bind-mounted into the
+    /// container); tests use it to run a stand-in aether.
+    pub async fn socket_dir(&self, id: &str) -> Option<PathBuf> {
+        self.sbx.lock().await.get(id).map(|e| e.dir.clone())
+    }
+
     pub async fn list(&self) -> Vec<Sandbox> {
         self.sbx.lock().await.values().map(|e| e.meta.clone()).collect()
     }
@@ -334,7 +340,8 @@ impl Edge {
             let _ = self.docker.stop(cid, 3).await;
             let _ = self.docker.remove(cid, true).await;
         }
-        self.release_quota(&meta).await;
+        // Quota release for an explicit delete is the apiserver's job (it
+        // charged); the edge releases only on paths it owns (TTL reap, crash).
         let _ = std::fs::remove_dir_all(self.cfg.data_dir.join("active").join(id));
         self.sbx.lock().await.remove(id);
         Ok(meta)
@@ -353,9 +360,17 @@ impl Edge {
         };
         let mut out = vec![];
         for id in due {
-            if let Some(e) = self.sbx.lock().await.get_mut(&id) {
-                e.meta.status = SbxStatus::Stopped { reason: "ttl".into() };
-            }
+            let meta = {
+                let mut m = self.sbx.lock().await;
+                match m.get_mut(&id) {
+                    Some(e) => {
+                        e.meta.status = SbxStatus::Stopped { reason: "ttl".into() };
+                        e.meta.clone()
+                    }
+                    None => continue,
+                }
+            };
+            self.release_quota(&meta).await;
             if let Ok(m) = self.delete(&id).await {
                 out.push(m);
             }

@@ -34,6 +34,15 @@ pub enum Op {
 }
 
 impl Op {
+    pub const ALL: [Op; 6] = [
+        Op::SandboxCreate,
+        Op::SandboxDelete,
+        Op::SandboxExec,
+        Op::ProjectCreateChild,
+        Op::PolicyGrant,
+        Op::QuotaSet,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             Op::SandboxCreate => "sandbox_create",
@@ -191,7 +200,9 @@ impl Iam {
             return Err(format!("principal {admin} does not exist"));
         }
         let mut policies = BTreeMap::new();
-        policies.insert(admin.to_string(), BTreeSet::from([Op::ProjectCreateChild, Op::PolicyGrant, Op::QuotaSet]));
+        // The bootstrap admin holds every op: it is the source every later
+        // delegation is bounded by (P §3.2).
+        policies.insert(admin.to_string(), BTreeSet::from(Op::ALL));
         s.projects.insert(
             id.into(),
             Project {

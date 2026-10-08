@@ -169,7 +169,7 @@ pub fn now_ms() -> u64 {
 }
 
 /// Serves the watcher to placement and the apiserver.
-pub struct WatcherService(Arc<Watcher>);
+pub struct WatcherService(pub Arc<Watcher>);
 
 impl Handler for WatcherService {
     async fn handle(&self, req: Request, out: Responder) {
