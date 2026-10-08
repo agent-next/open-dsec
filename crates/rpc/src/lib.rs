@@ -264,25 +264,43 @@ struct Conn {
     wr: tokio::sync::Mutex<BufWriter<WriteHalf<Box<dyn Duplex>>>>,
     pending: PendingMap,
     alive: Arc<std::sync::atomic::AtomicBool>,
+    /// Fired when the last external `Arc<Conn>` is dropped, so the reader
+    /// task releases its half of the stream and the peer sees EOF.
+    gone: Arc<tokio::sync::Notify>,
 }
 
 pub trait Duplex: AsyncRead + AsyncWrite + Send + Unpin {}
 impl<T: AsyncRead + AsyncWrite + Send + Unpin> Duplex for T {}
+
+impl Drop for Conn {
+    fn drop(&mut self) {
+        self.gone.notify_one();
+    }
+}
 
 impl Conn {
     fn new(stream: Box<dyn Duplex>) -> Arc<Conn> {
         let (rd, wr): (ReadHalf<Box<dyn Duplex>>, _) = split(stream);
         let pending: PendingMap = Arc::default();
         let alive = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let gone = Arc::new(tokio::sync::Notify::new());
         let conn = Arc::new(Conn {
             wr: tokio::sync::Mutex::new(BufWriter::new(wr)),
             pending: pending.clone(),
             alive: alive.clone(),
+            gone: gone.clone(),
         });
         tokio::spawn(async move {
             let mut rd = BufReader::new(rd);
-            while let Ok(Some(buf)) = read_frame(&mut rd).await {
-                let Ok(rep) = serde_json::from_slice::<Reply>(&buf) else { break };
+            loop {
+                let frame = tokio::select! {
+                    _ = gone.notified() => break,
+                    f = read_frame(&mut rd) => match f {
+                        Ok(Some(buf)) => buf,
+                        Ok(None) | Err(_) => break,
+                    },
+                };
+                let Ok(rep) = serde_json::from_slice::<Reply>(&frame) else { break };
                 let id = rep.id();
                 // Each arm locks, finishes with the guard, then awaits if it
                 // must: a MutexGuard held across an await is not Send.
@@ -563,5 +581,30 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         drop(b);
         assert_eq!(call.await.unwrap().unwrap_err().code, "disconnected");
+    }
+
+    #[tokio::test]
+    async fn dropping_the_client_closes_its_side_of_the_stream() {
+        // The reader task must not pin the connection open after the client is
+        // dropped: the peer relies on EOF (e.g. edge detecting a dead aether).
+        struct Nop;
+        impl Handler for Nop {
+            async fn handle(&self, _req: Request, out: Responder) {
+                out.ok(json!(null)).await
+            }
+        }
+        let (a, b) = tokio::io::duplex(4096);
+        let c = Client::from_stream(a);
+        let (done, done_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            serve_stream(b, Arc::new(Nop)).await;
+            let _ = done.send(());
+        });
+        c.call("x", json!(null)).await.unwrap();
+        drop(c);
+        tokio::time::timeout(std::time::Duration::from_secs(2), done_rx)
+            .await
+            .expect("server must see EOF after client drop")
+            .unwrap();
     }
 }

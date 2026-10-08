@@ -221,7 +221,7 @@ impl Session {
                             killed_at = Some(Instant::now());
                         }
                     }
-                    if is_err == false {
+                    if !is_err {
                         if let Some(c) = scan[0].rc {
                             code = c;
                         }
@@ -331,7 +331,7 @@ impl Scan {
         // Hold back only a proper prefix of the marker (it could be split
         // across reads) and any incomplete UTF-8 tail; emit the rest at once
         // so short outputs stream immediately.
-        let mut keep = (1..mb.len()).rev().filter_map(|k| self.acc.ends_with(&mb[..k]).then_some(k)).next().unwrap_or(0);
+        let mut keep = (1..mb.len()).rev().find(|&k| self.acc.ends_with(&mb[..k])).unwrap_or(0);
         let safe = self.acc.len() - keep;
         if let Err(e) = std::str::from_utf8(&self.acc[..safe]) {
             if e.error_len().is_none() {

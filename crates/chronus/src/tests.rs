@@ -175,7 +175,7 @@ async fn http_request_get_and_post_against_local_server() {
                 let req = String::from_utf8_lossy(&buf[..n]).to_string();
                 let body = if req.starts_with("POST") { "chunky" } else { "plain" };
                 let resp = if req.contains("/chunked") {
-                    format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n")
+                    "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n".to_string()
                 } else {
                     format!("HTTP/1.1 201 Created\r\nX-A: b\r\nContent-Length: {}\r\n\r\n{body}", body.len())
                 };
