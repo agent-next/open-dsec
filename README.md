@@ -10,6 +10,11 @@ with memory sharing, memory reclamation and CPU QoS. It also works with the RL
 trainer to pause and resume sandboxes when GPU jobs are preempted, and to
 contain reward hacking.
 
+open-dsec is an independent, community reproduction built only from the
+public reports cited in `SPEC.md`. It is not affiliated with or endorsed by
+DeepSeek, and contains no DeepSeek code beyond what they released under open
+licenses.
+
 Status: M1 — single-host control plane + container sandbox end to end
 (apiserver, IAM, placement, watcher, edge, Docker container backend,
 aether, chronus, trajectory log, libdsec). See `SPEC.md` for the
@@ -56,3 +61,7 @@ lands in M4 — M1 containers run with `network none`.
 
 Stop the stack with `scripts/dev-down.sh` (also removes containers
 labeled `open-dsec`).
+
+## License
+
+MIT — see `LICENSE`.

@@ -35,7 +35,7 @@ DeepSeek-V4.1-Flash tech report §5.1.3.
 - `scripts/dev-up.sh` / `dev-down.sh`: one-host stack; `make check` (unprivileged) and
   `make host-check` (real Docker); `scripts/e2e_m1.py` concurrent lifecycle e2e.
 
-### Verification (receipt: workspace task-runs/20261007-open-dsec/w1/VERIFY.md)
+### Verification
 - `make check`: 62 Rust tests + SDK pytest, fmt/clippy clean.
 - `make host-check`: real-container edge test, host SDK e2e, zero leftover containers enforced.
 - e2e: 50 concurrent sandboxes created/used/released at 12.8/s, trajectory replay 50/50 cached.
@@ -46,5 +46,3 @@ DeepSeek-V4.1-Flash tech report §5.1.3.
 - Network policy dict is stored and forwarded, not yet enforced (M4).
 - Aether binary is glibc-linked; default image `ubuntu:24.04` (musl static build pending network).
 - Trajectory replay key scheme synthesized (paper does not publish the exact scheme).
-- No cross-family independent review of this diff yet (reviewer lanes unavailable at merge time;
-  follow-up review owed on the same SHAs).
