@@ -104,26 +104,30 @@ fn subproject_quota_sum_cannot_exceed_parent() {
 #[test]
 fn charge_respects_quota_at_every_level_of_the_chain() {
     let iam = tree();
-    // eng: 6 sandboxes max. Five fit, the sixth is rejected at `eng`.
-    for i in 0..5 {
+    // eng: 6 sandboxes max. Six fit, the seventh is rejected at `eng`.
+    for i in 0..6 {
         iam.charge("eng", 1, 1).unwrap_or_else(|e| panic!("charge {i}: {e}"));
     }
     let e = iam.charge("eng", 1, 1).unwrap_err();
     assert!(e.contains("quota exceeded at eng"), "{e}");
-    // Parent-level bound: root allows 10 total; 5 in use. A child charge of
-    // 6 more sandboxes is rejected at root even though `eng` is over its own
-    // headroom only in aggregate.
-    iam.create_subproject("admin", "root", "other", q(8_000, 16_384, 6), &BTreeMap::new()).unwrap();
-    for _ in 0..5 {
+    // Root-level bound: root allows 10, eng holds 6; delegate 4 to `other`.
+    iam.create_subproject("admin", "root", "other", q(8_000, 16_384, 4), &BTreeMap::new()).unwrap();
+    for _ in 0..4 {
         iam.charge("other", 0, 0).unwrap();
     }
-    let e = iam.charge("other", 0, 0).unwrap_err();
-    assert!(e.contains("quota exceeded at root"), "{e}");
-    // Release frees room at every level.
-    iam.release("eng", 1, 1);
-    iam.charge("other", 0, 0).unwrap();
     assert_eq!(iam.usage("root").unwrap().sandboxes, 10);
+    // Full at both levels: reported at the child first.
+    let e = iam.charge("other", 0, 0).unwrap_err();
+    assert!(e.contains("quota exceeded at other"), "{e}");
+    // Freeing a slot at eng makes root room, but `other` stays full: the
+    // child's own bound still rejects.
+    iam.release("eng", 1, 1);
+    assert_eq!(iam.usage("root").unwrap().sandboxes, 9);
+    let e = iam.charge("other", 0, 0).unwrap_err();
+    assert!(e.contains("quota exceeded at other"), "{e}");
     iam.release("other", 0, 0);
+    iam.charge("other", 0, 0).unwrap();
+    // 5 in eng (one was released) + 4 in other.
     assert_eq!(iam.usage("root").unwrap().sandboxes, 9);
 }
 
@@ -132,8 +136,13 @@ fn humans_and_agents_use_the_same_api() {
     let iam = tree();
     // The agent gets exactly what a human would via the same calls, and every
     // decision path ignores `kind`.
-    iam.set_policy("admin", "root", "agent-7", BTreeSet::from([Op::SandboxCreate, Op::ProjectCreateChild, Op::PolicyGrant]))
-        .unwrap();
+    iam.set_policy(
+        "admin",
+        "root",
+        "agent-7",
+        BTreeSet::from([Op::SandboxCreate, Op::SandboxExec, Op::ProjectCreateChild, Op::PolicyGrant]),
+    )
+    .unwrap();
     iam.create_subproject(
         "agent-7",
         "root",
