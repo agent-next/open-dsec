@@ -40,7 +40,7 @@ Section-by-section extracted facts: `docs/paper-notes.md`.
 | chronus (shell session: exec, fs ops, HTTP, streaming I/O) | P §3.3 | `crates/chronus` | 1:1 + output cap (P §6.4 `yes` incident) |
 | Trajectory log (globally ordered per sandbox; fast-forward replay; provenance; deterministic replay) | V4 | `crates/trajlog` | 1:1 |
 | Backends: FnCall (pre-warmed pool, CPU+GPU shared/exclusive, warm Python pool) | P §2.2, §7 | `crates/edge/src/backend/fncall` | GPU: MIG unavailable on RTX 5090 → exclusive = whole GPU, shared = MPS (SUBSTITUTE) |
-| Backends: Container (Docker inside QEMU/libvirt worker VMs, sub-NUMA-bound) | P §3.3, V4.1 | `.../container` | 1:1 at small scale; sub-NUMA if hardware allows |
+| Backends: Container (Docker inside QEMU/libvirt worker VMs, sub-NUMA-bound) | P §3.3, V4.1 | `.../container` | M1: plain Docker on the host — no worker-VM nesting/sub-NUMA (docs/DEVIATIONS.md #1); paper-faithful from M4 hardening on |
 | Backends: MicroVM (Firecracker; EROFS ro block devs; overlayfs root in guest; OverlayBD via ublk; Docker-in-microVM disk) | P §5.1, §5.3 | `.../microvm` | 1:1 (reuse [AENV] overlaybd-rs/ublk) |
 | Backends: Full VM (QEMU; Android; virtio-gpu; DXVK) | P §2.2, §3.3 | `.../fullvm` | 1:1 for Linux GUI + Android x86 image; DXVK path best-effort |
 | Composable layers (base/workspace/toolkit as EROFS lowerdirs) + dockerd patch (~30 lines Go) | P §5.1, §7 | `images/`, `patches/moby/` | 1:1 |
