@@ -367,8 +367,14 @@ impl Conn {
     }
 }
 
-/// Multiplexing RPC client. Reconnects lazily when constructed from an address.
+/// Multiplexing RPC client. Reconnects lazily when constructed from an
+/// address. Clones share one connection and request-id space.
+#[derive(Clone)]
 pub struct Client {
+    inner: Arc<ClientInner>,
+}
+
+struct ClientInner {
     addr: Option<Addr>,
     conn: tokio::sync::Mutex<Option<Arc<Conn>>>,
     next_id: AtomicU64,
@@ -377,28 +383,37 @@ pub struct Client {
 
 impl Client {
     pub fn new(addr: Addr) -> Client {
-        Client { addr: Some(addr), conn: Default::default(), next_id: AtomicU64::new(1), token: Mutex::new(None) }
+        Client {
+            inner: Arc::new(ClientInner {
+                addr: Some(addr),
+                conn: Default::default(),
+                next_id: AtomicU64::new(1),
+                token: Mutex::new(None),
+            }),
+        }
     }
 
     /// Client over an already-established stream (no reconnect): used for the
     /// edge -> aether channel, where aether dials in (P §3.1).
     pub fn from_stream<S: Duplex + 'static>(stream: S) -> Client {
         Client {
-            addr: None,
-            conn: tokio::sync::Mutex::new(Some(Conn::new(Box::new(stream)))),
-            next_id: AtomicU64::new(1),
-            token: Mutex::new(None),
+            inner: Arc::new(ClientInner {
+                addr: None,
+                conn: tokio::sync::Mutex::new(Some(Conn::new(Box::new(stream)))),
+                next_id: AtomicU64::new(1),
+                token: Mutex::new(None),
+            }),
         }
     }
 
     pub fn with_token(self, token: &str) -> Client {
-        *self.token.lock().unwrap() = Some(token.to_string());
+        *self.inner.token.lock().unwrap() = Some(token.to_string());
         self
     }
 
     /// True while the underlying connection is up (the "channel" of P §3.3 health monitoring).
     pub async fn is_alive(&self) -> bool {
-        match &*self.conn.lock().await {
+        match &*self.inner.conn.lock().await {
             Some(c) => c.alive.load(Ordering::SeqCst),
             None => false,
         }
@@ -415,13 +430,13 @@ impl Client {
     }
 
     async fn conn(&self) -> Result<Arc<Conn>, RpcError> {
-        let mut g = self.conn.lock().await;
+        let mut g = self.inner.conn.lock().await;
         if let Some(c) = &*g {
             if c.alive.load(Ordering::SeqCst) {
                 return Ok(c.clone());
             }
         }
-        let Some(addr) = &self.addr else {
+        let Some(addr) = &self.inner.addr else {
             return Err(RpcError::new("disconnected", "connection closed"));
         };
         let stream: Box<dyn Duplex> = match addr {
@@ -441,10 +456,10 @@ impl Client {
 
     fn request(&self, method: &str, params: Value) -> Request {
         Request {
-            id: self.next_id.fetch_add(1, Ordering::SeqCst),
+            id: self.inner.next_id.fetch_add(1, Ordering::SeqCst),
             method: method.into(),
             params,
-            token: self.token.lock().unwrap().clone(),
+            token: self.inner.token.lock().unwrap().clone(),
         }
     }
 

@@ -15,7 +15,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use dsec_chronus::{self as chronus, Session, SessionOpts};
+use dsec_chronus::{self as chronus, Session};
+
+pub use dsec_chronus::SessionOpts;
 use dsec_rpc::b64;
 use dsec_rpc::{Duplex, Handler, Request, Responder};
 use serde_json::json;

@@ -135,7 +135,7 @@ impl TrajLog {
         let mut v: Vec<Entry> = log
             .by_key
             .values()
-            .filter(|e| session.map_or(true, |s| e.session == s) && op.map_or(true, |o| e.op == o))
+            .filter(|e| session.is_none_or(|s| e.session == s) && op.is_none_or(|o| e.op == o))
             .cloned()
             .collect();
         v.sort_by_key(|e| e.seq);
