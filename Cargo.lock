@@ -35,6 +35,7 @@ dependencies = [
  "dsec-rpc",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -43,6 +44,7 @@ name = "dsec-apiserver"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "dsec-aether",
  "dsec-edge",
  "dsec-iam",
  "dsec-placement",
@@ -72,11 +74,9 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "dsec-aether",
- "dsec-chronus",
  "dsec-rpc",
  "dsec-trajlog",
  "dsec-watcher",
- "libc",
  "serde",
  "serde_json",
  "tempfile",
@@ -87,6 +87,7 @@ dependencies = [
 name = "dsec-iam"
 version = "0.0.1"
 dependencies = [
+ "anyhow",
  "dsec-rpc",
  "serde",
  "serde_json",
