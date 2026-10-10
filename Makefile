@@ -1,4 +1,11 @@
-.PHONY: check host-check
+.PHONY: setup check host-check
+
+# Toolchain components and dependencies needed by make check
+# (prerequisites from README: rust stable, uv, Python >= 3.10).
+setup:
+	rustup component add rustfmt clippy
+	cargo fetch --locked
+	cd sdk/python && uv sync --group dev
 
 # Everything here runs unprivileged, without docker/KVM (AGENTS.md).
 # dsec-vmm is M3 work in progress; check what M1 ships.
