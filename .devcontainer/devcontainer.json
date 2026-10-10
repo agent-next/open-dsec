@@ -1,0 +1,8 @@
+{
+  "name": "open-dsec",
+  "image": "mcr.microsoft.com/devcontainers/rust:1",
+  "features": {
+    "ghcr.io/astral-sh/devcontainer-features/uv:1": {}
+  },
+  "postCreateCommand": "make setup"
+}
